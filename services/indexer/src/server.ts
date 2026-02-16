@@ -7,6 +7,21 @@ import { JsonIndexerStore } from "./store";
 
 type RequestWithMeta = express.Request & { rawBody?: string; requestId?: string };
 
+const runtimeEnv = (process.env.HUBRIS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const isProduction = runtimeEnv === "production";
+const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
+const internalAuthSecret =
+  process.env.INTERNAL_API_AUTH_SECRET
+  ?? (isProduction ? "" : "dev-internal-auth-secret");
+const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
+const internalAuthVerificationSecrets = Array.from(
+  new Set(
+    [internalAuthSecret, internalAuthPreviousSecret].filter((secret): secret is string => secret.length > 0)
+  )
+);
+
+validateStartupConfig();
+
 const app = express();
 app.use(
   express.json({
@@ -23,7 +38,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((_req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ALLOW_ORIGIN ?? "*");
+  res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id");
   if (_req.method === "OPTIONS") {
@@ -36,7 +51,6 @@ app.use((_req, res, next) => {
 const port = Number(process.env.INDEXER_PORT ?? 3030);
 const dbPath = process.env.INDEXER_DB_PATH ?? path.join(process.cwd(), "data", "indexer.json");
 const store = new JsonIndexerStore(dbPath);
-const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET ?? "dev-internal-auth-secret";
 const internalAuthMaxSkewMs = Number(process.env.INTERNAL_API_AUTH_MAX_SKEW_MS ?? "60000");
 const apiRateWindowMs = Number(process.env.API_RATE_WINDOW_MS ?? "60000");
 const apiRateMaxRequests = Number(process.env.API_RATE_MAX_REQUESTS ?? "1200");
@@ -45,8 +59,11 @@ const internalRateMaxRequests = Number(process.env.INTERNAL_API_RATE_MAX_REQUEST
 const seenSignatures = new Map<string, number>();
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
-if (internalAuthSecret === "dev-internal-auth-secret") {
+if (!isProduction && internalAuthSecret === "dev-internal-auth-secret") {
   console.warn("Indexer is using default INTERNAL_API_AUTH_SECRET. Override it before production.");
+}
+if (internalAuthPreviousSecret.length > 0) {
+  console.log("Indexer internal auth previous secret enabled for key rotation.");
 }
 
 const intentSchema = z.object({
@@ -208,22 +225,21 @@ function requireInternalAuth(req: express.Request, res: express.Response, next: 
   }
 
   const rawBody = request.rawBody ?? "";
-  const expected = computeInternalSignature(
-    internalAuthSecret,
-    req.method,
-    req.originalUrl.split("?")[0] ?? req.path,
-    timestamp,
-    rawBody
-  );
-
-  if (!constantTimeHexEqual(signature, expected)) {
+  const routePath = req.originalUrl.split("?")[0] ?? req.path;
+  const matchedSecret = internalAuthVerificationSecrets.find((secret) => {
+    const expected = computeInternalSignature(secret, req.method, routePath, timestamp, rawBody);
+    return constantTimeHexEqual(signature, expected);
+  });
+  if (!matchedSecret) {
     auditLog(request, "internal_auth_rejected", { reason: "bad_signature" });
     res.status(401).json({ error: "invalid_internal_auth_signature" });
     return;
   }
 
   seenSignatures.set(cacheKey, Date.now() + internalAuthMaxSkewMs);
-  auditLog(request, "internal_auth_ok");
+  auditLog(request, "internal_auth_ok", {
+    keyVersion: matchedSecret === internalAuthSecret ? "current" : "previous"
+  });
   next();
 }
 
@@ -298,4 +314,16 @@ function auditLog(req: RequestWithMeta, action: string, fields?: Record<string, 
     }
   }
   console.log(JSON.stringify(payload));
+}
+
+function validateStartupConfig() {
+  if (!internalAuthSecret) {
+    throw new Error("Missing INTERNAL_API_AUTH_SECRET");
+  }
+  if (isProduction && internalAuthSecret === "dev-internal-auth-secret") {
+    throw new Error("INTERNAL_API_AUTH_SECRET cannot use dev default in production");
+  }
+  if (isProduction && corsAllowOrigin.trim() === "*") {
+    throw new Error("CORS_ALLOW_ORIGIN cannot be '*' in production");
+  }
 }

@@ -38,6 +38,15 @@ enum IntentType {
   WITHDRAW = 4
 }
 
+const runtimeEnv = (process.env.HUBRIS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const isProduction = runtimeEnv === "production";
+const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
+const internalAuthSecret =
+  process.env.INTERNAL_API_AUTH_SECRET
+  ?? (isProduction ? "" : "dev-internal-auth-secret");
+
+validateStartupConfig();
+
 const app = express();
 app.set("json replacer", (_key: string, value: unknown) => (
   typeof value === "bigint" ? value.toString() : value
@@ -50,7 +59,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ALLOW_ORIGIN ?? "*");
+  res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id");
   if (req.method === "OPTIONS") {
@@ -74,7 +83,6 @@ const bridgeKey = (process.env.BRIDGE_PRIVATE_KEY as Hex) || relayerKey;
 
 const indexerApi = process.env.INDEXER_API_URL ?? "http://127.0.0.1:3030";
 const proverApi = process.env.PROVER_API_URL ?? "http://127.0.0.1:3050";
-const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET ?? "dev-internal-auth-secret";
 const relayerInitialBackfillBlocks = BigInt(process.env.RELAYER_INITIAL_BACKFILL_BLOCKS ?? "2000");
 const relayerMaxLogRange = BigInt(process.env.RELAYER_MAX_LOG_RANGE ?? "2000");
 const apiRateWindowMs = Number(process.env.API_RATE_WINDOW_MS ?? "60000");
@@ -87,7 +95,7 @@ if (!lockManagerAddress || !settlementAddress || !custodyAddress || !portalAddre
   throw new Error("Missing required relayer env vars for deployed addresses/private key");
 }
 
-if (internalAuthSecret === "dev-internal-auth-secret") {
+if (!isProduction && internalAuthSecret === "dev-internal-auth-secret") {
   console.warn("Relayer is using default INTERNAL_API_AUTH_SECRET. Override it before production.");
 }
 
@@ -563,4 +571,16 @@ function auditLog(req: RequestWithMeta | undefined, action: string, fields?: Rec
     }
   }
   console.log(JSON.stringify(payload));
+}
+
+function validateStartupConfig() {
+  if (!internalAuthSecret) {
+    throw new Error("Missing INTERNAL_API_AUTH_SECRET");
+  }
+  if (isProduction && internalAuthSecret === "dev-internal-auth-secret") {
+    throw new Error("INTERNAL_API_AUTH_SECRET cannot use dev default in production");
+  }
+  if (isProduction && corsAllowOrigin.trim() === "*") {
+    throw new Error("CORS_ALLOW_ORIGIN cannot be '*' in production");
+  }
 }
