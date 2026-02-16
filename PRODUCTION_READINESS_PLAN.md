@@ -84,9 +84,12 @@ Acceptance criteria:
 Status: In progress (core auth + replay protection implemented).
 
 Current blockers:
-- Prover and indexer internal endpoints are unauthenticated:
+- Default internal auth secret is still accepted if not overridden:
   - `/services/prover/src/server.ts`
   - `/services/indexer/src/server.ts`
+  - `/services/relayer/src/server.ts`
+- No key-rotation mechanism for internal auth signing keys.
+- CORS may still default to wildcard if env is not hardened.
 
 Deliverables:
 1. Add service-to-service auth for internal routes:
@@ -118,7 +121,10 @@ Current blockers:
 - JSON-file storage for indexer and prover queue:
   - `/services/indexer/src/store.ts`
   - `/services/prover/src/server.ts`
-- Prover dequeues before successful settle transaction confirmation.
+- Queue/update lifecycle is not transactional across:
+  - prover queue persistence
+  - on-chain receipt confirmation
+  - indexer mutation side effects
 
 Deliverables:
 1. Replace JSON state with Postgres (or equivalent) using transactions.
@@ -241,3 +247,188 @@ Acceptance criteria:
 8. P2-1/P2-2/P2-3 operational + audit closure.
 
 This order reduces exploit surface early and avoids integrating real proving on top of weak service/data guarantees.
+
+---
+
+## Current Implementation Snapshot (2026-02-16)
+
+This section maps the plan to concrete code paths that are still production-sensitive.
+
+1. Real proving is wired, but circuit semantics are still action-root-only:
+   - `/circuits/circom/SettlementBatchRoot.circom`
+   - `/services/prover/src/proof.ts`
+2. Deposit bridging remains simulation-based in relayer:
+   - `/services/relayer/src/server.ts` (`mint` + `registerBridgedDeposit`)
+3. Custody still trusts role-based deposit registration rather than canonical bridge attestation:
+   - `/contracts/src/hub/HubCustody.sol`
+4. Internal auth exists, but default secrets and wildcard CORS remain allowed defaults:
+   - `/services/indexer/src/server.ts`
+   - `/services/prover/src/server.ts`
+   - `/services/relayer/src/server.ts`
+5. Indexer/relayer/prover state is still JSON-file based and non-transactional:
+   - `/services/indexer/src/store.ts`
+   - `/services/prover/src/server.ts` (queue/state files)
+   - `/services/relayer/src/server.ts` (tracking file)
+
+---
+
+## Phase 0 Detailed Delivery Backlog
+
+Use this as the execution-level checklist under the P0 epics above.
+
+### P0-3 Internal API auth and network hardening (finish first)
+
+Implementation tasks:
+1. Enforce fail-closed startup in non-dev:
+   - Refuse startup when `INTERNAL_API_AUTH_SECRET` is default.
+   - Refuse startup when `CORS_ALLOW_ORIGIN=*` in production mode.
+2. Move internal endpoints behind private network boundary (VPC/private ingress only).
+3. Add key rotation support:
+   - Active key + previous key overlap window.
+   - Rotation runbook tested in staging.
+4. Add explicit request audit fields to all privileged mutations:
+   - request id, caller service, route, result, latency.
+
+Verification artifacts:
+1. Automated test proving unsigned, stale, replayed, and malformed requests are rejected.
+2. Staging penetration test report for `/internal/*` exposure.
+3. Runbook for key rotation and incident revocation.
+
+Exit criteria:
+1. No public ingress path can invoke any `/internal/*` route.
+2. Secrets can be rotated without downtime.
+
+---
+
+### P0-4 Durable persistence and queue correctness
+
+Implementation tasks:
+1. Replace JSON files with Postgres tables for:
+   - intents
+   - deposits
+   - prover_action_queue
+   - settlement_batches
+   - relayer_checkpoints
+2. Make enqueue + state transitions transactional.
+3. Add unique constraints for idempotency:
+   - `deposit_id`
+   - `intent_id`
+   - `batch_id`
+   - deterministic action key
+4. Add worker lease/lock so only one flush worker settles a batch at a time.
+5. Add reorg handling:
+   - persisted confirmations
+   - rollback/replay of unfinalized events
+6. Add dead-letter queue with bounded retries and backoff policy.
+
+Verification artifacts:
+1. Crash-recovery test: restart mid-flush and confirm no double-settlement.
+2. Duplicate ingestion test: same event replay does not duplicate accounting.
+3. Reorg simulation test with rollback + replay preserving correctness.
+
+Exit criteria:
+1. RPO = 0 for accepted intents/deposits/actions.
+2. No duplicate settlement under retries, restart, or replay.
+
+---
+
+### P0-2 Canonical bridge attestation path
+
+Implementation tasks:
+1. Introduce canonical bridge observer:
+   - spoke send observed
+   - hub receive observed
+   - finality depth satisfied before credit eligibility
+2. Define attestation identity key:
+   - `(originChainId, originTxHash, originLogIndex, depositId)`
+3. Enforce custody registration only from canonical receiver adapter path.
+4. Remove relayer mint simulation from production path and gate any simulation under explicit dev-only flag.
+5. Persist attestation metadata in indexer/prover pipeline and include it in settlement audit trail.
+
+Verification artifacts:
+1. Integration test where missing hub receive prevents settlement credit.
+2. Replay test where the same bridge event cannot be re-used.
+3. Negative test proving relayer cannot mint/credit in production mode.
+
+Exit criteria:
+1. Every credited deposit is cryptographically and operationally linked to a canonical bridge receive event.
+
+---
+
+### P0-1 Real ZK proving semantics
+
+Implementation tasks:
+1. Extend circuit to constrain protocol semantics, not only action root:
+   - deposit validity linkage
+   - lock/fill linkage
+   - amount/fee consistency checks
+2. Regenerate proving/verifying keys from audited circuit and pin artifact versions.
+3. Deploy generated verifier and wire through `Groth16VerifierAdapter`.
+4. Freeze `publicInputs` schema and version it.
+5. Add proof generation performance budget tests at batch size 50.
+
+Verification artifacts:
+1. `pnpm test:e2e:fork:circuit` passing on clean environment.
+2. Contract tests proving tampered proof/public inputs are rejected.
+3. Benchmark report with proof generation and settlement gas at action counts 1, 10, 25, 50.
+
+Exit criteria:
+1. Production runtime runs with `PROVER_MODE=circuit` and `HUB_VERIFIER_DEV_MODE=0` only.
+2. Finalized verifier contract address is pinned per environment.
+
+---
+
+## Production Configuration Guardrails (Fail Closed)
+
+These checks should be implemented as startup assertions and deploy-time validations.
+
+1. Services fail startup in production if:
+   - internal auth secret is default
+   - CORS origin is wildcard
+   - required RPC/contract addresses are missing
+2. Deployment fails if:
+   - verifier is in dev mode
+   - generated verifier address is zero or has no bytecode
+   - canonical bridge adapter is unset for enabled assets
+3. Relayer production mode must explicitly disable simulation code paths.
+4. CI must block merge if readiness checks fail.
+
+---
+
+## Mainnet Go/No-Go Gates
+
+All gates are mandatory before mainnet.
+
+1. Security gate:
+   - external audit complete
+   - all high/critical findings fixed
+   - emergency pause + role separation tested
+2. Protocol correctness gate:
+   - fork E2E for supply/repay and borrow/withdraw green
+   - invariant/fuzz suites green
+   - reorg/replay tests green
+3. Operational gate:
+   - dashboards and alerts live
+   - on-call runbook dry-run complete
+   - rollback rehearsal completed on testnet
+4. Performance gate:
+   - p95 settlement latency within target
+   - proof generation SLO within target
+   - no sustained queue growth under expected load
+
+Target SLOs (initial):
+1. Settlement latency p95: <= 120s.
+2. Proof generation p95 for 50 actions: <= 60s.
+3. Failed settlement retry success within 3 attempts for transient faults.
+4. Detection-to-page time for stuck queue: <= 2 minutes.
+
+---
+
+## Suggested 6-Week Execution Cadence
+
+1. Week 1: finish P0-3 fail-closed auth/network posture and rotation runbook.
+2. Week 2: implement Postgres schema + transactional queue ingestion (P0-4).
+3. Week 3: complete flush idempotency, reorg handling, and crash-recovery tests (P0-4).
+4. Week 4: ship canonical bridge attestation ingestion + custody enforcement (P0-2).
+5. Week 5: finalize semantic circuit constraints and regenerate verifier artifacts (P0-1).
+6. Week 6: full staging dress rehearsal, SLO validation, and go/no-go review.
