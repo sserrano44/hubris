@@ -44,6 +44,8 @@ const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
+const internalCallerHeader = "x-hubris-internal-service";
+const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "relayer";
 
 validateStartupConfig();
 
@@ -501,7 +503,8 @@ async function postInternal(baseUrl: string, routePath: string, body: Record<str
       headers: {
         "content-type": "application/json",
         "x-hubris-internal-ts": timestamp,
-        "x-hubris-internal-sig": signature
+        "x-hubris-internal-sig": signature,
+        [internalCallerHeader]: internalServiceName
       },
       body: rawBody,
       signal: controller.signal
@@ -517,7 +520,14 @@ async function postInternal(baseUrl: string, routePath: string, body: Record<str
 
 function signInternalRequest(method: string, routePath: string, rawBody: string) {
   const timestamp = Date.now().toString();
-  const signature = computeInternalSignature(internalAuthSecret, method, routePath, timestamp, rawBody);
+  const signature = computeInternalSignature(
+    internalAuthSecret,
+    method,
+    routePath,
+    timestamp,
+    internalServiceName,
+    rawBody
+  );
   return { timestamp, signature };
 }
 
@@ -526,10 +536,11 @@ function computeInternalSignature(
   method: string,
   routePath: string,
   timestamp: string,
+  callerService: string,
   rawBody: string
 ): string {
   const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-  const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${bodyHash}`;
+  const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${callerService}\n${bodyHash}`;
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
@@ -576,6 +587,9 @@ function auditLog(req: RequestWithMeta | undefined, action: string, fields?: Rec
 function validateStartupConfig() {
   if (!internalAuthSecret) {
     throw new Error("Missing INTERNAL_API_AUTH_SECRET");
+  }
+  if (!internalServiceName) {
+    throw new Error("INTERNAL_API_SERVICE_NAME cannot be empty");
   }
   if (isProduction && internalAuthSecret === "dev-internal-auth-secret") {
     throw new Error("INTERNAL_API_AUTH_SECRET cannot use dev default in production");

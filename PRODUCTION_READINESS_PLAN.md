@@ -84,12 +84,12 @@ Acceptance criteria:
 Status: In progress (core auth + replay protection implemented).
 
 Current blockers:
-- Default internal auth secret is still accepted if not overridden:
-  - `/services/prover/src/server.ts`
-  - `/services/indexer/src/server.ts`
-  - `/services/relayer/src/server.ts`
-- No key-rotation mechanism for internal auth signing keys.
-- CORS may still default to wildcard if env is not hardened.
+- Internal auth is still shared-secret based (no mTLS/service cert identity yet).
+- Environment rollout still needs strict ingress policy verification in staging/prod:
+  - `INTERNAL_API_ALLOWED_IPS`
+  - `INTERNAL_API_REQUIRE_PRIVATE_IP`
+  - `INTERNAL_API_TRUST_PROXY`
+- Caller allowlists must be validated per environment to avoid accidental over-permission.
 
 Deliverables:
 1. Add service-to-service auth for internal routes:
@@ -105,6 +105,16 @@ Implemented:
 4. CORS origin is now configurable via `CORS_ALLOW_ORIGIN` env.
 5. API and internal-route rate limiting middleware added to `indexer`, `prover`, and `relayer`.
 6. Request-id propagation (`x-request-id`) and structured audit logs added for privileged actions.
+7. Production fail-closed startup checks now reject default internal auth secrets.
+8. Production fail-closed startup checks now reject `CORS_ALLOW_ORIGIN=*`.
+9. Internal auth key rotation support added via `INTERNAL_API_AUTH_PREVIOUS_SECRET`.
+10. Signed caller identity (`x-hubris-internal-service`) added and verified on `/internal/*`.
+11. Caller allowlists added via `INTERNAL_API_ALLOWED_SERVICES`.
+12. Internal network gating added for `/internal/*`:
+    - private-IP requirement by default in production
+    - explicit allowlist mode via `INTERNAL_API_ALLOWED_IPS`
+    - proxy-aware IP evaluation via `INTERNAL_API_TRUST_PROXY`
+13. E2E internal calls updated to include signed caller identity.
 
 Acceptance criteria:
 1. Unauthenticated requests to `/internal/*` are rejected.

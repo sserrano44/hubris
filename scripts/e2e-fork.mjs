@@ -33,6 +33,7 @@ const INTERNAL_API_AUTH_SECRET =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? dotEnv.INTERNAL_API_AUTH_SECRET
   ?? "dev-internal-auth-secret";
+const E2E_INTERNAL_CALLER_SERVICE = process.env.E2E_INTERNAL_CALLER_SERVICE ?? "e2e";
 
 const INDEXER_PORT = Number(process.env.E2E_INDEXER_PORT ?? "4030");
 const RELAYER_PORT = Number(process.env.E2E_RELAYER_PORT ?? "4040");
@@ -731,7 +732,7 @@ async function postInternal(baseUrl, routePath, body, secret) {
   const rawBody = JSON.stringify(body);
   const timestamp = Date.now().toString();
   const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-  const payload = `POST\n${routePath}\n${timestamp}\n${bodyHash}`;
+  const payload = `POST\n${routePath}\n${timestamp}\n${E2E_INTERNAL_CALLER_SERVICE}\n${bodyHash}`;
   const signature = createHmac("sha256", secret).update(payload).digest("hex");
 
   const res = await fetch(new URL(routePath, baseUrl).toString(), {
@@ -739,7 +740,8 @@ async function postInternal(baseUrl, routePath, body, secret) {
     headers: {
       "content-type": "application/json",
       "x-hubris-internal-ts": timestamp,
-      "x-hubris-internal-sig": signature
+      "x-hubris-internal-sig": signature,
+      "x-hubris-internal-service": E2E_INTERNAL_CALLER_SERVICE
     },
     body: rawBody
   });

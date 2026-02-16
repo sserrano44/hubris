@@ -14,6 +14,12 @@ const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
 const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
+const internalCallerHeader = "x-hubris-internal-service";
+const internalRequirePrivateIp =
+  (process.env.INTERNAL_API_REQUIRE_PRIVATE_IP ?? (isProduction ? "1" : "0")) !== "0";
+const internalAllowedIps = parseCsvSet(process.env.INTERNAL_API_ALLOWED_IPS ?? "");
+const internalAllowedServices = parseCsvSet(process.env.INTERNAL_API_ALLOWED_SERVICES ?? "relayer,prover,e2e");
+const internalTrustProxy = (process.env.INTERNAL_API_TRUST_PROXY ?? "0") !== "0";
 const internalAuthVerificationSecrets = Array.from(
   new Set(
     [internalAuthSecret, internalAuthPreviousSecret].filter((secret): secret is string => secret.length > 0)
@@ -23,6 +29,7 @@ const internalAuthVerificationSecrets = Array.from(
 validateStartupConfig();
 
 const app = express();
+app.set("trust proxy", internalTrustProxy);
 app.use(
   express.json({
     limit: "1mb",
@@ -40,7 +47,10 @@ app.use((req, res, next) => {
 app.use((_req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "content-type,x-request-id,x-hubris-internal-ts,x-hubris-internal-sig,x-hubris-internal-service"
+  );
   if (_req.method === "OPTIONS") {
     res.status(204).end();
     return;
@@ -94,7 +104,7 @@ const depositSchema = z.object({
 });
 
 app.use(rateLimitMiddleware);
-app.use("/internal", requireInternalAuth);
+app.use("/internal", requireInternalNetwork, requireInternalAuth);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
@@ -196,10 +206,16 @@ function requireInternalAuth(req: express.Request, res: express.Response, next: 
   const request = req as RequestWithMeta;
   const timestamp = req.header("x-hubris-internal-ts");
   const signature = req.header("x-hubris-internal-sig");
+  const callerService = req.header(internalCallerHeader)?.trim();
 
-  if (!timestamp || !signature) {
+  if (!timestamp || !signature || !callerService) {
     auditLog(request, "internal_auth_rejected", { reason: "missing_headers" });
     res.status(401).json({ error: "missing_internal_auth_headers" });
+    return;
+  }
+  if (internalAllowedServices.size > 0 && !internalAllowedServices.has(callerService)) {
+    auditLog(request, "internal_auth_rejected", { reason: "unauthorized_service", callerService });
+    res.status(403).json({ error: "unauthorized_internal_service" });
     return;
   }
 
@@ -216,7 +232,7 @@ function requireInternalAuth(req: express.Request, res: express.Response, next: 
     return;
   }
 
-  const cacheKey = `${timestamp}:${signature}`;
+  const cacheKey = `${timestamp}:${callerService}:${signature}`;
   purgeExpiredSignatures();
   if (seenSignatures.has(cacheKey)) {
     auditLog(request, "internal_auth_rejected", { reason: "replay" });
@@ -227,7 +243,7 @@ function requireInternalAuth(req: express.Request, res: express.Response, next: 
   const rawBody = request.rawBody ?? "";
   const routePath = req.originalUrl.split("?")[0] ?? req.path;
   const matchedSecret = internalAuthVerificationSecrets.find((secret) => {
-    const expected = computeInternalSignature(secret, req.method, routePath, timestamp, rawBody);
+    const expected = computeInternalSignature(secret, req.method, routePath, timestamp, callerService, rawBody);
     return constantTimeHexEqual(signature, expected);
   });
   if (!matchedSecret) {
@@ -238,8 +254,33 @@ function requireInternalAuth(req: express.Request, res: express.Response, next: 
 
   seenSignatures.set(cacheKey, Date.now() + internalAuthMaxSkewMs);
   auditLog(request, "internal_auth_ok", {
+    callerService,
     keyVersion: matchedSecret === internalAuthSecret ? "current" : "previous"
   });
+  next();
+}
+
+function requireInternalNetwork(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const request = req as RequestWithMeta;
+  const clientIp = extractClientIp(req);
+  if (!clientIp) {
+    auditLog(request, "internal_network_rejected", { reason: "missing_ip" });
+    res.status(403).json({ error: "internal_network_rejected" });
+    return;
+  }
+
+  if (internalAllowedIps.size > 0 && !internalAllowedIps.has(clientIp)) {
+    auditLog(request, "internal_network_rejected", { reason: "ip_not_allowlisted", clientIp });
+    res.status(403).json({ error: "internal_network_rejected" });
+    return;
+  }
+
+  if (internalAllowedIps.size === 0 && internalRequirePrivateIp && !isPrivateIp(clientIp)) {
+    auditLog(request, "internal_network_rejected", { reason: "ip_not_private", clientIp });
+    res.status(403).json({ error: "internal_network_rejected" });
+    return;
+  }
+
   next();
 }
 
@@ -255,10 +296,11 @@ function computeInternalSignature(
   method: string,
   routePath: string,
   timestamp: string,
+  callerService: string,
   rawBody: string
 ): string {
   const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-  const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${bodyHash}`;
+  const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${callerService}\n${bodyHash}`;
   return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
@@ -326,4 +368,54 @@ function validateStartupConfig() {
   if (isProduction && corsAllowOrigin.trim() === "*") {
     throw new Error("CORS_ALLOW_ORIGIN cannot be '*' in production");
   }
+  if (isProduction && !internalRequirePrivateIp && internalAllowedIps.size === 0) {
+    throw new Error(
+      "Set INTERNAL_API_REQUIRE_PRIVATE_IP=1 or configure INTERNAL_API_ALLOWED_IPS in production"
+    );
+  }
+}
+
+function parseCsvSet(value: string): Set<string> {
+  return new Set(
+    value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+  );
+}
+
+function extractClientIp(req: express.Request): string | null {
+  const source = req.ip ?? req.socket.remoteAddress ?? "";
+  const normalized = normalizeIp(source);
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIp(value: string): string {
+  let normalized = value.trim();
+  if (normalized.startsWith("::ffff:")) {
+    normalized = normalized.slice("::ffff:".length);
+  }
+  const zoneIndex = normalized.indexOf("%");
+  if (zoneIndex >= 0) {
+    normalized = normalized.slice(0, zoneIndex);
+  }
+  return normalized;
+}
+
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1") return true;
+  if (ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80:")) return true;
+
+  const parts = ip.split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+
+  const a = octets[0] ?? -1;
+  const b = octets[1] ?? -1;
+  if (a === 10 || a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
 }
