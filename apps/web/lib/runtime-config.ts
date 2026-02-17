@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 
 export type Deployments = {
-  hub: Record<string, `0x${string}`>;
-  spoke: Record<string, `0x${string}`>;
+  hub: {
+    tokenRegistry: `0x${string}`;
+    moneyMarket: `0x${string}`;
+    riskManager: `0x${string}`;
+    intentInbox: `0x${string}`;
+    lockManager: `0x${string}`;
+    custody: `0x${string}`;
+    settlement: `0x${string}`;
+  };
+  spoke: {
+    portal: `0x${string}`;
+    bridgeAdapter: `0x${string}`;
+  };
   tokens: Record<
     string,
     {

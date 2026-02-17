@@ -23,6 +23,11 @@ export function BorrowWithdrawForm({ mode }: { mode: "borrow" | "withdraw" }) {
 
   async function submit() {
     if (!address || !config || !token) return;
+    const intentInbox = config.hub.intentInbox;
+    if (!intentInbox) {
+      setStatus("Missing hub intent inbox in deployment config.");
+      return;
+    }
 
     const amountRaw = parseUnits(amount, token.decimals);
     const quoteRes = await fetch(`${RELAYER_API}/quote?intentType=${mode === "borrow" ? IntentType.BORROW : IntentType.WITHDRAW}&amount=${amountRaw.toString()}`);
@@ -47,7 +52,7 @@ export function BorrowWithdrawForm({ mode }: { mode: "borrow" | "withdraw" }) {
 
     setStatus("Signing intent...");
     const signature = await signTypedDataAsync(
-      getIntentTypedData(Number(process.env.NEXT_PUBLIC_HUB_CHAIN_ID ?? 8453), config.hub.intentInbox, intent)
+      getIntentTypedData(Number(process.env.NEXT_PUBLIC_HUB_CHAIN_ID ?? 8453), intentInbox, intent)
     );
 
     const localIntentId = rawIntentId(intent);

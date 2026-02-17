@@ -1,14 +1,29 @@
-import fs from "node:fs";
 import path from "node:path";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { z } from "zod";
-import { createPublicClient, createWalletClient, formatEther, parseEther, http } from "viem";
+import { createPublicClient, createWalletClient, defineChain, formatEther, parseEther, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { HubSettlementAbi } from "@zkhub/abis";
 import { buildBatch } from "./batch";
 import { CircuitProofProvider, DevProofProvider } from "./proof";
+import { JsonProverQueueStore, SqliteProverQueueStore } from "./queue-store";
+const runtimeEnv = (process.env.ZKHUB_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const isProduction = runtimeEnv === "production";
+const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
+const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET
+    ?? (isProduction ? "" : "dev-internal-auth-secret");
+const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
+const internalCallerHeader = "x-zkhub-internal-service";
+const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "prover";
+const internalRequirePrivateIp = (process.env.INTERNAL_API_REQUIRE_PRIVATE_IP ?? (isProduction ? "1" : "0")) !== "0";
+const internalAllowedIps = parseCsvSet(process.env.INTERNAL_API_ALLOWED_IPS ?? "");
+const internalAllowedServices = parseCsvSet(process.env.INTERNAL_API_ALLOWED_SERVICES ?? "relayer,e2e");
+const internalTrustProxy = (process.env.INTERNAL_API_TRUST_PROXY ?? "0") !== "0";
+const internalAuthVerificationSecrets = Array.from(new Set([internalAuthSecret, internalAuthPreviousSecret].filter((secret) => secret.length > 0)));
+validateStartupConfig();
 const app = express();
+app.set("trust proxy", internalTrustProxy);
 app.use(express.json({
     limit: "1mb",
     verify: (req, _res, buf) => {
@@ -22,9 +37,9 @@ app.use((req, res, next) => {
     next();
 });
 app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ALLOW_ORIGIN ?? "*");
+    res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id");
+    res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id,x-zkhub-internal-ts,x-zkhub-internal-sig,x-zkhub-internal-service");
     if (req.method === "OPTIONS") {
         res.status(204).end();
         return;
@@ -32,11 +47,13 @@ app.use((req, res, next) => {
     next();
 });
 const port = Number(process.env.PROVER_PORT ?? 3050);
+const proverStoreKind = (process.env.PROVER_STORE_KIND ?? "json").toLowerCase();
 const queuePath = process.env.PROVER_QUEUE_PATH ?? path.join(process.cwd(), "data", "prover-queue.json");
 const statePath = process.env.PROVER_STATE_PATH ?? path.join(process.cwd(), "data", "prover-state.json");
+const dbPath = process.env.PROVER_DB_PATH ?? path.join(process.cwd(), "data", "prover.db");
+const initialBatchId = BigInt(process.env.PROVER_BATCH_START ?? "1");
 const mode = process.env.PROVER_MODE ?? "dev";
 const batchSize = Number(process.env.PROVER_BATCH_SIZE ?? 20);
-const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET ?? "dev-internal-auth-secret";
 const internalAuthMaxSkewMs = Number(process.env.INTERNAL_API_AUTH_MAX_SKEW_MS ?? "60000");
 const apiRateWindowMs = Number(process.env.API_RATE_WINDOW_MS ?? "60000");
 const apiRateMaxRequests = Number(process.env.API_RATE_MAX_REQUESTS ?? "1200");
@@ -55,16 +72,27 @@ if (!settlementAddress || !proverKey) {
     throw new Error("Missing HUB_SETTLEMENT_ADDRESS or PROVER_PRIVATE_KEY");
 }
 const account = privateKeyToAccount(proverKey);
-const walletClient = createWalletClient({ account, transport: http(hubRpc) });
-const publicClient = createPublicClient({ transport: http(hubRpc) });
+const hubChain = defineChain({
+    id: Number(hubChainId),
+    name: "Hub",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [hubRpc] } }
+});
+const walletClient = createWalletClient({ account, chain: hubChain, transport: http(hubRpc) });
+const publicClient = createPublicClient({ chain: hubChain, transport: http(hubRpc) });
 const funderAccount = proverFunderKey ? privateKeyToAccount(proverFunderKey) : null;
-const funderWallet = funderAccount ? createWalletClient({ account: funderAccount, transport: http(hubRpc) }) : null;
+const funderWallet = funderAccount
+    ? createWalletClient({ account: funderAccount, chain: hubChain, transport: http(hubRpc) })
+    : null;
 const proofProvider = mode === "dev" ? new DevProofProvider() : new CircuitProofProvider();
 const seenSignatures = new Map();
 const rateBuckets = new Map();
 let isFlushing = false;
-if (internalAuthSecret === "dev-internal-auth-secret") {
+if (!isProduction && internalAuthSecret === "dev-internal-auth-secret") {
     console.warn("Prover is using default INTERNAL_API_AUTH_SECRET. Override it before production.");
+}
+if (internalAuthPreviousSecret.length > 0) {
+    console.log("Prover internal auth previous secret enabled for key rotation.");
 }
 const actionSchema = z.discriminatedUnion("kind", [
     z.object({
@@ -100,15 +128,21 @@ const actionSchema = z.discriminatedUnion("kind", [
         relayer: z.string().startsWith("0x")
     })
 ]);
-const queue = loadQueue(queuePath);
-const persistedState = loadState(statePath);
-let nextBatchId = persistedState.nextBatchId > 0n
-    ? persistedState.nextBatchId
-    : BigInt(process.env.PROVER_BATCH_START ?? "1");
-app.use("/internal", requireInternalAuth);
+const queueStore = proverStoreKind === "sqlite"
+    ? new SqliteProverQueueStore(dbPath, initialBatchId)
+    : new JsonProverQueueStore(queuePath, statePath, initialBatchId);
+let nextBatchId = queueStore.getNextBatchId(initialBatchId);
+app.use("/internal", requireInternalNetwork, requireInternalAuth);
 app.use(rateLimitMiddleware);
 app.get("/health", (_req, res) => {
-    res.json({ ok: true, mode, queued: queue.length, nextBatchId: nextBatchId.toString(), isFlushing });
+    res.json({
+        ok: true,
+        mode,
+        store: proverStoreKind,
+        queued: queueStore.getQueuedCount(),
+        nextBatchId: nextBatchId.toString(),
+        isFlushing
+    });
 });
 app.post("/internal/enqueue", (req, res) => {
     const parsed = actionSchema.safeParse(req.body);
@@ -118,22 +152,19 @@ app.post("/internal/enqueue", (req, res) => {
         return;
     }
     const action = normalizeAction(parsed.data);
-    const key = actionKey(action);
-    const alreadyQueued = queue.some((item) => actionKey(item) === key);
-    if (alreadyQueued) {
-        auditLog(req, "enqueue_duplicate", { key });
-        res.json({ ok: true, queued: queue.length, duplicate: true });
+    const enqueueResult = queueStore.enqueue(action);
+    if (enqueueResult === "duplicate") {
+        auditLog(req, "enqueue_duplicate");
+        res.json({ ok: true, queued: queueStore.getQueuedCount(), duplicate: true });
         return;
     }
-    queue.push(action);
-    saveQueue(queuePath, queue);
-    auditLog(req, "enqueue_ok", { key, queued: queue.length });
-    res.json({ ok: true, queued: queue.length });
+    auditLog(req, "enqueue_ok", { queued: queueStore.getQueuedCount() });
+    res.json({ ok: true, queued: queueStore.getQueuedCount() });
 });
 app.post("/internal/flush", async (_req, res) => {
     try {
         const settled = await flushQueue();
-        auditLog(_req, "flush_ok", { settled, queued: queue.length });
+        auditLog(_req, "flush_ok", { settled, queued: queueStore.getQueuedCount() });
         res.json({ ok: true, settled });
     }
     catch (error) {
@@ -143,6 +174,7 @@ app.post("/internal/flush", async (_req, res) => {
 });
 app.listen(port, () => {
     console.log(`Prover service listening on :${port} (mode=${mode})`);
+    console.log(`Prover persistence store: kind=${proverStoreKind}`);
     startupPreflight().catch((error) => {
         console.error("Prover startup preflight failed", error);
         process.exit(1);
@@ -156,11 +188,14 @@ app.listen(port, () => {
 async function flushQueue() {
     if (isFlushing)
         return 0;
-    if (queue.length === 0)
+    if (queueStore.getQueuedCount() === 0)
         return 0;
     isFlushing = true;
     try {
-        const actions = queue.slice(0, batchSize);
+        const records = queueStore.peek(batchSize);
+        if (records.length === 0)
+            return 0;
+        const actions = records.map((record) => record.action);
         const batch = buildBatch(nextBatchId, hubChainId, spokeChainId, actions);
         const { proof } = await proofProvider.prove(batch);
         await ensureProverHasGas("flush");
@@ -173,10 +208,8 @@ async function flushQueue() {
         });
         await publicClient.waitForTransactionReceipt({ hash: txHash });
         // Persist queue + batch cursor immediately after on-chain success.
-        queue.splice(0, actions.length);
-        saveQueue(queuePath, queue);
         nextBatchId += 1n;
-        saveState(statePath, { nextBatchId });
+        queueStore.markSettled(records, nextBatchId);
         for (const action of actions) {
             if (action.kind === "supply" || action.kind === "repay") {
                 await postInternal(indexerUrl, "/internal/deposits/upsert", {
@@ -290,28 +323,6 @@ function normalizeAction(input) {
         relayer: input.relayer
     };
 }
-function loadQueue(filePath) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, "[]");
-        return [];
-    }
-    try {
-        const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        return raw.map((entry) => normalizeAction(entry));
-    }
-    catch {
-        return [];
-    }
-}
-function saveQueue(filePath, actions) {
-    const json = actions.map((action) => JSON.parse(JSON.stringify(action, (_, value) => {
-        if (typeof value === "bigint")
-            return value.toString();
-        return value;
-    })));
-    fs.writeFileSync(filePath, JSON.stringify(json, null, 2));
-}
 async function postInternal(baseUrl, routePath, body) {
     const rawBody = JSON.stringify(body);
     const { timestamp, signature } = signInternalRequest("POST", routePath, rawBody);
@@ -323,7 +334,8 @@ async function postInternal(baseUrl, routePath, body) {
             headers: {
                 "content-type": "application/json",
                 "x-zkhub-internal-ts": timestamp,
-                "x-zkhub-internal-sig": signature
+                "x-zkhub-internal-sig": signature,
+                [internalCallerHeader]: internalServiceName
             },
             body: rawBody,
             signal: controller.signal
@@ -338,16 +350,22 @@ async function postInternal(baseUrl, routePath, body) {
 }
 function signInternalRequest(method, routePath, rawBody) {
     const timestamp = Date.now().toString();
-    const signature = computeInternalSignature(internalAuthSecret, method, routePath, timestamp, rawBody);
+    const signature = computeInternalSignature(internalAuthSecret, method, routePath, timestamp, internalServiceName, rawBody);
     return { timestamp, signature };
 }
 function requireInternalAuth(req, res, next) {
     const request = req;
     const timestamp = req.header("x-zkhub-internal-ts");
     const signature = req.header("x-zkhub-internal-sig");
-    if (!timestamp || !signature) {
+    const callerService = req.header(internalCallerHeader)?.trim();
+    if (!timestamp || !signature || !callerService) {
         auditLog(request, "internal_auth_rejected", { reason: "missing_headers" });
         res.status(401).json({ error: "missing_internal_auth_headers" });
+        return;
+    }
+    if (internalAllowedServices.size > 0 && !internalAllowedServices.has(callerService)) {
+        auditLog(request, "internal_auth_rejected", { reason: "unauthorized_service", callerService });
+        res.status(403).json({ error: "unauthorized_internal_service" });
         return;
     }
     const ts = Number(timestamp);
@@ -361,7 +379,7 @@ function requireInternalAuth(req, res, next) {
         res.status(401).json({ error: "stale_internal_auth_timestamp" });
         return;
     }
-    const cacheKey = `${timestamp}:${signature}`;
+    const cacheKey = `${timestamp}:${callerService}:${signature}`;
     purgeExpiredSignatures();
     if (seenSignatures.has(cacheKey)) {
         auditLog(request, "internal_auth_rejected", { reason: "replay" });
@@ -369,14 +387,41 @@ function requireInternalAuth(req, res, next) {
         return;
     }
     const rawBody = request.rawBody ?? "";
-    const expected = computeInternalSignature(internalAuthSecret, req.method, req.originalUrl.split("?")[0] ?? req.path, timestamp, rawBody);
-    if (!constantTimeHexEqual(signature, expected)) {
+    const routePath = req.originalUrl.split("?")[0] ?? req.path;
+    const matchedSecret = internalAuthVerificationSecrets.find((secret) => {
+        const expected = computeInternalSignature(secret, req.method, routePath, timestamp, callerService, rawBody);
+        return constantTimeHexEqual(signature, expected);
+    });
+    if (!matchedSecret) {
         auditLog(request, "internal_auth_rejected", { reason: "bad_signature" });
         res.status(401).json({ error: "invalid_internal_auth_signature" });
         return;
     }
     seenSignatures.set(cacheKey, Date.now() + internalAuthMaxSkewMs);
-    auditLog(request, "internal_auth_ok");
+    auditLog(request, "internal_auth_ok", {
+        callerService,
+        keyVersion: matchedSecret === internalAuthSecret ? "current" : "previous"
+    });
+    next();
+}
+function requireInternalNetwork(req, res, next) {
+    const request = req;
+    const clientIp = extractClientIp(req);
+    if (!clientIp) {
+        auditLog(request, "internal_network_rejected", { reason: "missing_ip" });
+        res.status(403).json({ error: "internal_network_rejected" });
+        return;
+    }
+    if (internalAllowedIps.size > 0 && !internalAllowedIps.has(clientIp)) {
+        auditLog(request, "internal_network_rejected", { reason: "ip_not_allowlisted", clientIp });
+        res.status(403).json({ error: "internal_network_rejected" });
+        return;
+    }
+    if (internalAllowedIps.size === 0 && internalRequirePrivateIp && !isPrivateIp(clientIp)) {
+        auditLog(request, "internal_network_rejected", { reason: "ip_not_private", clientIp });
+        res.status(403).json({ error: "internal_network_rejected" });
+        return;
+    }
     next();
 }
 function purgeExpiredSignatures() {
@@ -386,9 +431,9 @@ function purgeExpiredSignatures() {
             seenSignatures.delete(key);
     }
 }
-function computeInternalSignature(secret, method, routePath, timestamp, rawBody) {
+function computeInternalSignature(secret, method, routePath, timestamp, callerService, rawBody) {
     const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-    const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${bodyHash}`;
+    const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${callerService}\n${bodyHash}`;
     return createHmac("sha256", secret).update(payload).digest("hex");
 }
 function constantTimeHexEqual(a, b) {
@@ -401,18 +446,6 @@ function constantTimeHexEqual(a, b) {
     }
     catch {
         return false;
-    }
-}
-function actionKey(action) {
-    switch (action.kind) {
-        case "supply":
-        case "repay":
-            return `${action.kind}:${action.depositId.toString()}:${action.user}:${action.hubAsset}:${action.amount.toString()}`;
-        case "borrow":
-        case "withdraw":
-            return `${action.kind}:${action.intentId}:${action.user}:${action.hubAsset}:${action.amount.toString()}:${action.fee.toString()}:${action.relayer}`;
-        default:
-            return JSON.stringify(action);
     }
 }
 function rateLimitMiddleware(req, res, next) {
@@ -451,28 +484,72 @@ function auditLog(req, action, fields) {
     }
     console.log(JSON.stringify(payload));
 }
-function loadState(filePath) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) {
-        const initial = { nextBatchId: 1n };
-        saveState(filePath, initial);
-        return initial;
-    }
-    try {
-        const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        return { nextBatchId: BigInt(raw.nextBatchId ?? "1") };
-    }
-    catch {
-        return { nextBatchId: 1n };
-    }
-}
-function saveState(filePath, state) {
-    fs.writeFileSync(filePath, JSON.stringify({ nextBatchId: state.nextBatchId.toString() }, null, 2));
-}
 function parseNativeWei(value) {
     const normalized = value.trim();
     if (!normalized || normalized === "0")
         return 0n;
     return parseEther(normalized);
+}
+function validateStartupConfig() {
+    if (!internalAuthSecret) {
+        throw new Error("Missing INTERNAL_API_AUTH_SECRET");
+    }
+    if (isProduction && internalAuthSecret === "dev-internal-auth-secret") {
+        throw new Error("INTERNAL_API_AUTH_SECRET cannot use dev default in production");
+    }
+    if (isProduction && corsAllowOrigin.trim() === "*") {
+        throw new Error("CORS_ALLOW_ORIGIN cannot be '*' in production");
+    }
+    if (!internalServiceName) {
+        throw new Error("INTERNAL_API_SERVICE_NAME cannot be empty");
+    }
+    if (isProduction && !internalRequirePrivateIp && internalAllowedIps.size === 0) {
+        throw new Error("Set INTERNAL_API_REQUIRE_PRIVATE_IP=1 or configure INTERNAL_API_ALLOWED_IPS in production");
+    }
+}
+function parseCsvSet(value) {
+    return new Set(value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0));
+}
+function extractClientIp(req) {
+    const source = req.ip ?? req.socket.remoteAddress ?? "";
+    const normalized = normalizeIp(source);
+    return normalized.length > 0 ? normalized : null;
+}
+function normalizeIp(value) {
+    let normalized = value.trim();
+    if (normalized.startsWith("::ffff:")) {
+        normalized = normalized.slice("::ffff:".length);
+    }
+    const zoneIndex = normalized.indexOf("%");
+    if (zoneIndex >= 0) {
+        normalized = normalized.slice(0, zoneIndex);
+    }
+    return normalized;
+}
+function isPrivateIp(ip) {
+    if (ip === "::1")
+        return true;
+    if (ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80:"))
+        return true;
+    const parts = ip.split(".");
+    if (parts.length !== 4)
+        return false;
+    const octets = parts.map((part) => Number(part));
+    if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255))
+        return false;
+    const a = octets[0] ?? -1;
+    const b = octets[1] ?? -1;
+    if (a === 10 || a === 127)
+        return true;
+    if (a === 192 && b === 168)
+        return true;
+    if (a === 172 && b >= 16 && b <= 31)
+        return true;
+    if (a === 169 && b === 254)
+        return true;
+    return false;
 }
 //# sourceMappingURL=server.js.map

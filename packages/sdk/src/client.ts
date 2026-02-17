@@ -1,4 +1,4 @@
-import { createPublicClient, http, type PublicClient, type WalletClient } from "viem";
+import { createPublicClient, http, type WalletClient } from "viem";
 import { base, optimism } from "viem/chains";
 import { HubMoneyMarketAbi, HubRiskManagerAbi } from "@zkhub/abis";
 import type { Intent, IntentLifecycle, ProtocolAddresses } from "./types";
@@ -10,16 +10,18 @@ export type HubPosition = {
   healthFactor: bigint;
 };
 
-export function createHubPublicClient(rpcUrl: string): PublicClient {
+type ReadClient = ReturnType<typeof createPublicClient>;
+
+export function createHubPublicClient(rpcUrl: string) {
   return createPublicClient({ chain: base, transport: http(rpcUrl) });
 }
 
-export function createSpokePublicClient(rpcUrl: string): PublicClient {
+export function createSpokePublicClient(rpcUrl: string) {
   return createPublicClient({ chain: optimism, transport: http(rpcUrl) });
 }
 
 export async function readHubPosition(
-  client: PublicClient,
+  client: ReadClient,
   addresses: ProtocolAddresses,
   user: `0x${string}`,
   assets: `0x${string}`[]
@@ -65,8 +67,12 @@ export async function signIntent(
   intentInbox: `0x${string}`,
   intent: Intent
 ): Promise<`0x${string}`> {
+  const account = walletClient.account;
+  if (!account) {
+    throw new Error("Wallet client account is required to sign intent");
+  }
   const typedData = getIntentTypedData(hubChainId, intentInbox, intent);
-  return walletClient.signTypedData(typedData);
+  return walletClient.signTypedData({ ...typedData, account });
 }
 
 export async function fetchIntentStatus(indexerApiUrl: string, intentId: string): Promise<IntentLifecycle | null> {

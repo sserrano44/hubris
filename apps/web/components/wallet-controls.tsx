@@ -6,10 +6,18 @@ export function WalletControls() {
   const { address, chain } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
+  const primaryConnector = connectors[0];
 
   if (!address) {
     return (
-      <button className="btn" onClick={() => connect({ connector: connectors[0] })}>
+      <button
+        className="btn"
+        disabled={!primaryConnector}
+        onClick={() => {
+          if (!primaryConnector) return;
+          connect({ connector: primaryConnector });
+        }}
+      >
         Connect Wallet
       </button>
     );

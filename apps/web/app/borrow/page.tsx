@@ -5,7 +5,7 @@ export default function BorrowPage() {
     <section className="stack">
       <article className="card">
         <h2>Borrow To Worldchain</h2>
-        <p className="muted">Lifecycle: pending lock -> locked -> filled -> awaiting settlement -> settled.</p>
+        <p className="muted">Lifecycle: pending lock -&gt; locked -&gt; filled -&gt; awaiting settlement -&gt; settled.</p>
       </article>
       <BorrowWithdrawForm mode="borrow" />
     </section>

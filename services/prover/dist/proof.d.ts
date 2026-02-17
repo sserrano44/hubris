@@ -5,10 +5,11 @@ export interface ProofProvider {
         publicInputs: bigint[];
     }>;
 }
+type PublicInputs = [bigint, bigint, bigint, bigint];
 export declare class DevProofProvider implements ProofProvider {
     prove(batch: SettlementBatchPayload): Promise<{
         proof: `0x${string}`;
-        publicInputs: bigint[];
+        publicInputs: PublicInputs;
     }>;
 }
 export declare class CircuitProofProvider implements ProofProvider {
@@ -24,3 +25,4 @@ export declare class CircuitProofProvider implements ProofProvider {
         publicInputs: bigint[];
     }>;
 }
+export {};

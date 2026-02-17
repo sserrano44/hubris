@@ -38,8 +38,12 @@ export async function readHubPosition(client, addresses, user, assets) {
     return { collateral, debt, healthFactor };
 }
 export async function signIntent(walletClient, hubChainId, intentInbox, intent) {
+    const account = walletClient.account;
+    if (!account) {
+        throw new Error("Wallet client account is required to sign intent");
+    }
     const typedData = getIntentTypedData(hubChainId, intentInbox, intent);
-    return walletClient.signTypedData(typedData);
+    return walletClient.signTypedData({ ...typedData, account });
 }
 export async function fetchIntentStatus(indexerApiUrl, intentId) {
     const res = await fetch(`${indexerApiUrl}/intents/${intentId}`);

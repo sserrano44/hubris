@@ -42,11 +42,12 @@ export class CircuitProofProvider {
                 ...new Array(MAX_BATCH_ACTIONS - actionIds.length).fill(0n)
             ];
             const publicInputs = expectedPublicInputs(batch);
+            const [batchIdInput, hubChainIdInput, spokeChainIdInput, actionsRootInput] = publicInputs;
             const witnessInput = {
-                batchId: publicInputs[0].toString(),
-                hubChainId: publicInputs[1].toString(),
-                spokeChainId: publicInputs[2].toString(),
-                actionsRoot: publicInputs[3].toString(),
+                batchId: batchIdInput.toString(),
+                hubChainId: hubChainIdInput.toString(),
+                spokeChainId: spokeChainIdInput.toString(),
+                actionsRoot: actionsRootInput.toString(),
                 actionCount: actionIds.length.toString(),
                 actionIds: paddedActionIds.map((value) => value.toString())
             };
@@ -62,15 +63,8 @@ export class CircuitProofProvider {
             ]);
             const proofJson = JSON.parse(fs.readFileSync(proofPath, "utf8"));
             const publicSignals = JSON.parse(fs.readFileSync(publicPath, "utf8"));
-            if (publicSignals.length !== 4) {
-                throw new Error(`Unexpected public signal count: got ${publicSignals.length}, expected 4`);
-            }
-            const computedPublic = publicSignals.map((value) => BigInt(value));
-            for (let i = 0; i < 4; i++) {
-                if (computedPublic[i] !== publicInputs[i]) {
-                    throw new Error(`Public input mismatch at index ${i}: got ${computedPublic[i].toString()}, expected ${publicInputs[i].toString()}`);
-                }
-            }
+            const computedPublic = parsePublicSignals(publicSignals);
+            assertPublicInputsMatch(computedPublic, publicInputs);
             return {
                 proof: encodeGroth16Proof(proofJson),
                 publicInputs
@@ -102,6 +96,31 @@ function expectedPublicInputs(batch) {
         toField(batch.spokeChainId),
         toField(BigInt(batch.actionsRoot))
     ];
+}
+function parsePublicSignals(publicSignals) {
+    const [batchId, hubChainId, spokeChainId, actionsRoot, ...rest] = publicSignals;
+    if (rest.length > 0
+        || batchId === undefined
+        || hubChainId === undefined
+        || spokeChainId === undefined
+        || actionsRoot === undefined) {
+        throw new Error(`Unexpected public signal count: got ${publicSignals.length}, expected 4`);
+    }
+    return [BigInt(batchId), BigInt(hubChainId), BigInt(spokeChainId), BigInt(actionsRoot)];
+}
+function assertPublicInputsMatch(computed, expected) {
+    if (computed[0] !== expected[0]) {
+        throw new Error(`Public input mismatch at index 0: got ${computed[0].toString()}, expected ${expected[0].toString()}`);
+    }
+    if (computed[1] !== expected[1]) {
+        throw new Error(`Public input mismatch at index 1: got ${computed[1].toString()}, expected ${expected[1].toString()}`);
+    }
+    if (computed[2] !== expected[2]) {
+        throw new Error(`Public input mismatch at index 2: got ${computed[2].toString()}, expected ${expected[2].toString()}`);
+    }
+    if (computed[3] !== expected[3]) {
+        throw new Error(`Public input mismatch at index 3: got ${computed[3].toString()}, expected ${expected[3].toString()}`);
+    }
 }
 function encodeGroth16Proof(proof) {
     const a = [BigInt(proof.pi_a[0]), BigInt(proof.pi_a[1])];
