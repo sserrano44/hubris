@@ -134,7 +134,7 @@ contract ProductionBridgeAndVerifierTest is TestBase {
     }
 
     function test_verifierRejectsEmptyProofAndWrongPublicInputCount() external {
-        bytes memory devProof = bytes("HUBRIS_DEV_PROOF");
+        bytes memory devProof = bytes("ZKHUB_DEV_PROOF");
         Verifier verifier = new Verifier(address(this), true, keccak256(devProof), address(0), 4);
 
         uint256[] memory validInputs = new uint256[](4);
@@ -156,7 +156,7 @@ contract ProductionBridgeAndVerifierTest is TestBase {
     }
 
     function test_verifierDevModeHashMatchOnly() external {
-        bytes memory devProof = bytes("HUBRIS_DEV_PROOF");
+        bytes memory devProof = bytes("ZKHUB_DEV_PROOF");
         Verifier verifier = new Verifier(address(this), true, keccak256(devProof), address(0), 4);
 
         uint256[] memory publicInputs = new uint256[](4);

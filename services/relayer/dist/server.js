@@ -4,7 +4,7 @@ import { createHash, createHmac, randomUUID } from "node:crypto";
 import express from "express";
 import { z } from "zod";
 import { createPublicClient, createWalletClient, encodeAbiParameters, http, keccak256, parseAbiItem, privateKeyToAccount } from "viem";
-import { HubLockManagerAbi, HubSettlementAbi, HubCustodyAbi, MockERC20Abi, SpokePortalAbi } from "@hubris/abis";
+import { HubLockManagerAbi, HubSettlementAbi, HubCustodyAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
 var IntentType;
 (function (IntentType) {
     IntentType[IntentType["SUPPLY"] = 1] = "SUPPLY";
@@ -387,8 +387,8 @@ async function postInternal(baseUrl, routePath, body) {
             method: "POST",
             headers: {
                 "content-type": "application/json",
-                "x-hubris-internal-ts": timestamp,
-                "x-hubris-internal-sig": signature
+                "x-zkhub-internal-ts": timestamp,
+                "x-zkhub-internal-sig": signature
             },
             body: rawBody,
             signal: controller.signal

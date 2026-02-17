@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hubris is a hub-and-spoke, intent-based, cross-chain money market protocol. The **hub** (Base) handles all accounting, risk checks, and liquidity. The **spoke** (Worldchain) handles user entry/exit and escrow execution. Settlement is batched and ZK-verified using Groth16 proofs.
+ZkHub is a hub-and-spoke, intent-based, cross-chain money market protocol. The **hub** (Base) handles all accounting, risk checks, and liquidity. The **spoke** (Worldchain) handles user entry/exit and escrow execution. Settlement is batched and ZK-verified using Groth16 proofs.
 
 ## Monorepo Structure
 

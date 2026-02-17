@@ -28,7 +28,7 @@ const SPOKE_RPC_URL = process.env.SPOKE_RPC_URL ?? "http://127.0.0.1:9545";
 const HUB_CHAIN_ID = Number(process.env.HUB_CHAIN_ID ?? 8453);
 const SPOKE_CHAIN_ID = Number(process.env.SPOKE_CHAIN_ID ?? 480);
 const HUB_VERIFIER_DEV_MODE = (process.env.HUB_VERIFIER_DEV_MODE ?? "1") !== "0";
-const HUB_DEV_PROOF_TEXT = process.env.HUB_DEV_PROOF_TEXT ?? "HUBRIS_DEV_PROOF";
+const HUB_DEV_PROOF_TEXT = process.env.HUB_DEV_PROOF_TEXT ?? "ZKHUB_DEV_PROOF";
 const HUB_GROTH16_VERIFIER_ADDRESS = process.env.HUB_GROTH16_VERIFIER_ADDRESS ?? "";
 const INTERNAL_API_AUTH_SECRET = process.env.INTERNAL_API_AUTH_SECRET ?? "dev-internal-auth-secret";
 

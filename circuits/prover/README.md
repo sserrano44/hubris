@@ -3,7 +3,7 @@
 `services/prover` supports two proof providers:
 
 1. `PROVER_MODE=dev`
-- Uses fixed `HUBRIS_DEV_PROOF`.
+- Uses fixed `ZKHUB_DEV_PROOF`.
 - Useful for local deterministic testing.
 
 2. `PROVER_MODE=circuit`

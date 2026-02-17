@@ -1,5 +1,5 @@
 {
-  "name": "@hubris/prover",
+  "name": "@zkhub/prover",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@hubris/abis": "workspace:*",
+    "@zkhub/abis": "workspace:*",
     "express": "^4.21.1",
     "viem": "^2.23.2",
     "zod": "^3.23.8"

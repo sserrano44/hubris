@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
-import type { IntentLifecycle } from "@hubris/sdk";
+import type { IntentLifecycle } from "@zkhub/sdk";
 
 const INDEXER_API = process.env.NEXT_PUBLIC_INDEXER_API_URL ?? "http://127.0.0.1:3030";
 

@@ -14,7 +14,7 @@ import {
   type Hex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { HubLockManagerAbi, HubSettlementAbi, HubCustodyAbi, MockERC20Abi, SpokePortalAbi } from "@hubris/abis";
+import { HubLockManagerAbi, HubSettlementAbi, HubCustodyAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
 
 type RequestWithMeta = express.Request & { requestId?: string };
 type Intent = {
@@ -38,13 +38,13 @@ enum IntentType {
   WITHDRAW = 4
 }
 
-const runtimeEnv = (process.env.HUBRIS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const runtimeEnv = (process.env.ZKHUB_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
 const isProduction = runtimeEnv === "production";
 const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
-const internalCallerHeader = "x-hubris-internal-service";
+const internalCallerHeader = "x-zkhub-internal-service";
 const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "relayer";
 
 validateStartupConfig();
@@ -502,8 +502,8 @@ async function postInternal(baseUrl: string, routePath: string, body: Record<str
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-hubris-internal-ts": timestamp,
-        "x-hubris-internal-sig": signature,
+        "x-zkhub-internal-ts": timestamp,
+        "x-zkhub-internal-sig": signature,
         [internalCallerHeader]: internalServiceName
       },
       body: rawBody,

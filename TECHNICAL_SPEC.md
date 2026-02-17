@@ -1,11 +1,11 @@
-# Hubris V2 Technical Specification
+# zkhub Technical Specification
 
 Version: `0.1.0`  
 Last updated: `2026-02-15`
 
 ## 1. Purpose and Scope
 
-This document defines the technical specification for Hubris V2, a hub-and-spoke, intent-based, cross-chain money market.
+This document defines the technical specification for zkhub, a hub-and-spoke, intent-based, cross-chain money market.
 
 Core goals:
 1. Concentrate accounting and liquidity on Base (hub).
@@ -15,10 +15,10 @@ Core goals:
 5. Support production ZK verifier mode without changing settlement interface.
 
 In-scope components:
-1. Solidity contracts under `/Users/sebas/projects/HubrisV2/contracts/src`.
-2. Relayer, indexer, prover services under `/Users/sebas/projects/HubrisV2/services`.
-3. Circuit and proving artifacts under `/Users/sebas/projects/HubrisV2/circuits`.
-4. E2E/testing flows in `/Users/sebas/projects/HubrisV2/scripts` and `/Users/sebas/projects/HubrisV2/contracts/test`.
+1. Solidity contracts under `/Users/sebas/projects/zkhub/contracts/src`.
+2. Relayer, indexer, prover services under `/Users/sebas/projects/zkhub/services`.
+3. Circuit and proving artifacts under `/Users/sebas/projects/zkhub/circuits`.
+4. E2E/testing flows in `/Users/sebas/projects/zkhub/scripts` and `/Users/sebas/projects/zkhub/contracts/test`.
 
 ## 2. Topology and Chains
 
@@ -41,7 +41,7 @@ Initial assets:
 3. `wARS` (18 decimals default)
 4. `wBRL` (18 decimals default)
 
-`TokenRegistry` (`/Users/sebas/projects/HubrisV2/contracts/src/hub/TokenRegistry.sol`) stores:
+`TokenRegistry` (`/Users/sebas/projects/zkhub/contracts/src/hub/TokenRegistry.sol`) stores:
 1. Hub token address.
 2. Spoke token address.
 3. Decimals.
@@ -51,7 +51,7 @@ Initial assets:
 
 ## 4. Core Data Structures
 
-Defined in `/Users/sebas/projects/HubrisV2/contracts/src/libraries/DataTypes.sol`.
+Defined in `/Users/sebas/projects/zkhub/contracts/src/libraries/DataTypes.sol`.
 
 ### 4.1 Intent
 ```
@@ -87,7 +87,7 @@ SettlementBatch {
 ## 5. Contract Specifications
 
 ### 5.1 HubMoneyMarket
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubMoneyMarket.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubMoneyMarket.sol`
 
 Responsibilities:
 1. Track per-asset supply/debt shares and indices.
@@ -112,7 +112,7 @@ Settlement entry points:
 4. `settlementFinalizeWithdraw(user, asset, amount, relayer, fee)`
 
 ### 5.2 HubRiskManager
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubRiskManager.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubRiskManager.sol`
 
 Responsibilities:
 1. Enforce supply/borrow caps and enabled assets.
@@ -131,7 +131,7 @@ Lock-aware behavior:
 2. Includes `reservedDebt` addition to debt.
 
 ### 5.3 HubIntentInbox
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubIntentInbox.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubIntentInbox.sol`
 
 Responsibilities:
 1. EIP-712 intent verification.
@@ -139,14 +139,14 @@ Responsibilities:
 3. Consumer allowlist for intent consumption.
 
 Domain:
-1. Name: `HubrisIntentInbox`
+1. Name: `ZkHubIntentInbox`
 2. Version: `1`
 
 Nonce model:
 1. `nonceUsed[user][nonce]` boolean.
 
 ### 5.4 HubLockManager
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubLockManager.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubLockManager.sol`
 
 Responsibilities:
 1. Enforce mandatory lock before borrow/withdraw fill.
@@ -166,7 +166,7 @@ Reservation state:
 3. `reservedWithdraw[user][asset]`
 
 ### 5.5 HubCustody
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubCustody.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubCustody.sol`
 
 Responsibilities:
 1. Register bridged deposits (`BRIDGE_ROLE`).
@@ -177,7 +177,7 @@ Note:
 1. Current production gap: deposit registration still trusts privileged bridge role rather than canonical bridge attestation.
 
 ### 5.6 HubSettlement
-File: `/Users/sebas/projects/HubrisV2/contracts/src/hub/HubSettlement.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/hub/HubSettlement.sol`
 
 Responsibilities:
 1. Verify proof and public inputs.
@@ -196,7 +196,7 @@ Batch max:
 1. `MAX_BATCH_ACTIONS = 50`
 
 ### 5.7 Verifier
-File: `/Users/sebas/projects/HubrisV2/contracts/src/zk/Verifier.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/zk/Verifier.sol`
 
 Modes:
 1. Dev mode: `DEV_MODE=true`, proof accepted by hash match (`DEV_PROOF_HASH`).
@@ -206,7 +206,7 @@ Public input count:
 1. Configured immutable `PUBLIC_INPUT_COUNT` (current expected value `4`).
 
 ### 5.8 Groth16VerifierAdapter
-File: `/Users/sebas/projects/HubrisV2/contracts/src/zk/Groth16VerifierAdapter.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/zk/Groth16VerifierAdapter.sol`
 
 Responsibilities:
 1. Decode generic `bytes proof` into `(uint256[2], uint256[2][2], uint256[2])`.
@@ -215,7 +215,7 @@ Responsibilities:
 4. Delegate to snarkjs-style generated verifier signature.
 
 ### 5.9 SpokePortal
-File: `/Users/sebas/projects/HubrisV2/contracts/src/spoke/SpokePortal.sol`
+File: `/Users/sebas/projects/zkhub/contracts/src/spoke/SpokePortal.sol`
 
 Responsibilities:
 1. Escrow inbound supply/repay and invoke bridge adapter.
@@ -230,8 +230,8 @@ Events:
 
 ### 5.10 Bridge Adapters
 Files:
-1. `/Users/sebas/projects/HubrisV2/contracts/src/spoke/CanonicalBridgeAdapter.sol`
-2. `/Users/sebas/projects/HubrisV2/contracts/src/spoke/MockBridgeAdapter.sol`
+1. `/Users/sebas/projects/zkhub/contracts/src/spoke/CanonicalBridgeAdapter.sol`
+2. `/Users/sebas/projects/zkhub/contracts/src/spoke/MockBridgeAdapter.sol`
 
 Canonical adapter:
 1. Per-token route config.
@@ -308,7 +308,7 @@ Current public inputs passed on-chain:
 4. `actionsRoot` (field reduced)
 
 ### 7.4 Circuit
-File: `/Users/sebas/projects/HubrisV2/circuits/circom/SettlementBatchRoot.circom`
+File: `/Users/sebas/projects/zkhub/circuits/circom/SettlementBatchRoot.circom`
 
 Public signals:
 1. `batchId`
@@ -326,7 +326,7 @@ Current limitation:
 ## 8. Off-Chain Service Specifications
 
 ### 8.1 Relayer service
-File: `/Users/sebas/projects/HubrisV2/services/relayer/src/server.ts`
+File: `/Users/sebas/projects/zkhub/services/relayer/src/server.ts`
 
 Public endpoints:
 1. `GET /health`
@@ -346,7 +346,7 @@ Current production gap:
 1. Deposit path still includes mock mint/register simulation in relayer.
 
 ### 8.2 Indexer service
-File: `/Users/sebas/projects/HubrisV2/services/indexer/src/server.ts`
+File: `/Users/sebas/projects/zkhub/services/indexer/src/server.ts`
 
 Public endpoints:
 1. `GET /health`
@@ -363,7 +363,7 @@ Persistence:
 1. JSON file store (`services/indexer/src/store.ts`), not yet production DB.
 
 ### 8.3 Prover service
-File: `/Users/sebas/projects/HubrisV2/services/prover/src/server.ts`
+File: `/Users/sebas/projects/zkhub/services/prover/src/server.ts`
 
 Public endpoint:
 1. `GET /health`
@@ -385,8 +385,8 @@ Queue behavior:
 Used by relayer/prover/indexer.
 
 Headers:
-1. `x-hubris-internal-ts`
-2. `x-hubris-internal-sig`
+1. `x-zkhub-internal-ts`
+2. `x-zkhub-internal-sig`
 
 Signature payload:
 1. `METHOD + "\n" + ROUTE_PATH + "\n" + TIMESTAMP + "\n" + SHA256(rawBody)`
@@ -401,12 +401,12 @@ Additional controls:
 ## 9. Deployment Specification
 
 Primary script:
-1. `/Users/sebas/projects/HubrisV2/contracts/script/deploy-local.mjs`
+1. `/Users/sebas/projects/zkhub/contracts/script/deploy-local.mjs`
 
 Outputs:
-1. `/Users/sebas/projects/HubrisV2/contracts/deployments/local.json`
-2. `/Users/sebas/projects/HubrisV2/contracts/deployments/local.env`
-3. `/Users/sebas/projects/HubrisV2/apps/web/public/deployments/local.json`
+1. `/Users/sebas/projects/zkhub/contracts/deployments/local.json`
+2. `/Users/sebas/projects/zkhub/contracts/deployments/local.env`
+3. `/Users/sebas/projects/zkhub/apps/web/public/deployments/local.json`
 
 Verifier deployment modes:
 1. `HUB_VERIFIER_DEV_MODE=1`:
@@ -419,7 +419,7 @@ Verifier deployment modes:
 ## 10. E2E and Test Specifications
 
 ### 10.1 Contract test suites
-Location: `/Users/sebas/projects/HubrisV2/contracts/test`
+Location: `/Users/sebas/projects/zkhub/contracts/test`
 
 Coverage includes:
 1. Interest and share-accounting invariants.
@@ -432,7 +432,7 @@ Coverage includes:
 
 ### 10.2 Scripted fork E2E (dev proof)
 Script:
-1. `/Users/sebas/projects/HubrisV2/scripts/e2e-fork.mjs`
+1. `/Users/sebas/projects/zkhub/scripts/e2e-fork.mjs`
 
 Command:
 1. `pnpm test:e2e:fork`
@@ -445,7 +445,7 @@ RPC resolution order:
 
 ### 10.3 Scripted fork E2E (circuit mode)
 Script:
-1. `/Users/sebas/projects/HubrisV2/scripts/e2e-fork-circuit-one-shot.mjs`
+1. `/Users/sebas/projects/zkhub/scripts/e2e-fork-circuit-one-shot.mjs`
 
 Command:
 1. `pnpm test:e2e:fork:circuit`
@@ -457,12 +457,12 @@ Preflight requirements:
 4. if `HUB_GROTH16_VERIFIER_ADDRESS` is missing/stale, prepare step deploys/re-resolves it
 
 Direct runner (without one-shot prepare):
-1. script: `/Users/sebas/projects/HubrisV2/scripts/e2e-fork-circuit.mjs`
+1. script: `/Users/sebas/projects/zkhub/scripts/e2e-fork-circuit.mjs`
 2. command: `pnpm test:e2e:fork:circuit:exec`
 
 ### 10.4 Circuit E2E prepare helper
 Script:
-1. `/Users/sebas/projects/HubrisV2/scripts/e2e-fork-circuit-prepare.mjs`
+1. `/Users/sebas/projects/zkhub/scripts/e2e-fork-circuit-prepare.mjs`
 
 Command:
 1. `pnpm test:e2e:fork:circuit:prepare`
@@ -499,4 +499,4 @@ The remaining blockers are:
    3. prove amount/fee constraint validity
 2. Complete P0-2 canonical bridge attestation path and remove simulation mint path.
 3. Complete P0-4 durable persistence migration from JSON to transactional DB + outbox.
-4. Execute P1 and P2 workstreams as defined in `/Users/sebas/projects/HubrisV2/PRODUCTION_READINESS_PLAN.md`.
+4. Execute P1 and P2 workstreams as defined in `/Users/sebas/projects/zkhub/PRODUCTION_READINESS_PLAN.md`.

@@ -88,7 +88,7 @@ async function main() {
 
   console.log("[e2e] generating + building shared ABIs package");
   await run("pnpm", ["abis:generate"], { cwd: rootDir });
-  await run("pnpm", ["--filter", "@hubris/abis", "build"], { cwd: rootDir });
+  await run("pnpm", ["--filter", "@zkhub/abis", "build"], { cwd: rootDir });
 
   console.log("[e2e] deploying protocol to fork endpoints");
   await run("node", ["./contracts/script/deploy-local.mjs"], {
@@ -155,9 +155,9 @@ async function main() {
   };
 
   console.log("[e2e] starting indexer/prover/relayer");
-  children.push(startService("indexer", ["--filter", "@hubris/indexer", "dev"], serviceEnv));
-  children.push(startService("prover", ["--filter", "@hubris/prover", "dev"], serviceEnv));
-  children.push(startService("relayer", ["--filter", "@hubris/relayer", "dev"], serviceEnv));
+  children.push(startService("indexer", ["--filter", "@zkhub/indexer", "dev"], serviceEnv));
+  children.push(startService("prover", ["--filter", "@zkhub/prover", "dev"], serviceEnv));
+  children.push(startService("relayer", ["--filter", "@zkhub/relayer", "dev"], serviceEnv));
 
   await waitForHealth(`${INDEXER_API_URL}/health`);
   await waitForHealth(`${PROVER_API_URL}/health`);
@@ -282,7 +282,7 @@ async function main() {
 
   const signature = await userAccount.signTypedData({
     domain: {
-      name: "HubrisIntentInbox",
+      name: "ZkHubIntentInbox",
       version: "1",
       chainId: HUB_CHAIN_ID,
       verifyingContract: inbox
@@ -346,10 +346,10 @@ async function main() {
 
 function assertWorkspaceLinks() {
   const required = [
-    path.join(rootDir, "services", "prover", "node_modules", "@hubris", "abis", "package.json"),
-    path.join(rootDir, "services", "relayer", "node_modules", "@hubris", "abis", "package.json"),
-    path.join(rootDir, "services", "relayer", "node_modules", "@hubris", "sdk", "package.json"),
-    path.join(rootDir, "services", "indexer", "node_modules", "@hubris", "sdk", "package.json")
+    path.join(rootDir, "services", "prover", "node_modules", "@zkhub", "abis", "package.json"),
+    path.join(rootDir, "services", "relayer", "node_modules", "@zkhub", "abis", "package.json"),
+    path.join(rootDir, "services", "relayer", "node_modules", "@zkhub", "sdk", "package.json"),
+    path.join(rootDir, "services", "indexer", "node_modules", "@zkhub", "sdk", "package.json")
   ];
 
   const missing = required.filter((entry) => !fs.existsSync(entry));
@@ -739,9 +739,9 @@ async function postInternal(baseUrl, routePath, body, secret) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-hubris-internal-ts": timestamp,
-      "x-hubris-internal-sig": signature,
-      "x-hubris-internal-service": E2E_INTERNAL_CALLER_SERVICE
+      "x-zkhub-internal-ts": timestamp,
+      "x-zkhub-internal-sig": signature,
+      "x-zkhub-internal-service": E2E_INTERNAL_CALLER_SERVICE
     },
     body: rawBody
   });

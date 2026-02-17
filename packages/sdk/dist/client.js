@@ -1,6 +1,6 @@
 import { createPublicClient, http } from "viem";
 import { base, optimism } from "viem/chains";
-import { HubMoneyMarketAbi, HubRiskManagerAbi } from "@hubris/abis";
+import { HubMoneyMarketAbi, HubRiskManagerAbi } from "@zkhub/abis";
 import { getIntentTypedData } from "./eip712";
 export function createHubPublicClient(rpcUrl) {
     return createPublicClient({ chain: base, transport: http(rpcUrl) });

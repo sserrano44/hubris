@@ -30,11 +30,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting Base-local anvil on :${HUB_RPC_PORT}"
-anvil --port "$HUB_RPC_PORT" --chain-id "$HUB_CHAIN_ID" --block-time 1 >/tmp/hubris-anvil-base.log 2>&1 &
+anvil --port "$HUB_RPC_PORT" --chain-id "$HUB_CHAIN_ID" --block-time 1 >/tmp/zkhub-anvil-base.log 2>&1 &
 PIDS+=("$!")
 
 echo "Starting Worldchain-local anvil on :${SPOKE_RPC_PORT}"
-anvil --port "$SPOKE_RPC_PORT" --chain-id "$SPOKE_CHAIN_ID" --block-time 1 >/tmp/hubris-anvil-world.log 2>&1 &
+anvil --port "$SPOKE_RPC_PORT" --chain-id "$SPOKE_CHAIN_ID" --block-time 1 >/tmp/zkhub-anvil-world.log 2>&1 &
 PIDS+=("$!")
 
 rpc_ready() {
@@ -64,19 +64,19 @@ source ./contracts/deployments/local.env
 set +a
 
 echo "Generating shared ABIs"
-pnpm --filter @hubris/abis run generate
+pnpm --filter @zkhub/abis run generate
 
 echo "Starting indexer, prover, relayer, and web"
-pnpm --filter @hubris/indexer dev &
+pnpm --filter @zkhub/indexer dev &
 PIDS+=("$!")
 
-pnpm --filter @hubris/prover dev &
+pnpm --filter @zkhub/prover dev &
 PIDS+=("$!")
 
-pnpm --filter @hubris/relayer dev &
+pnpm --filter @zkhub/relayer dev &
 PIDS+=("$!")
 
-pnpm --filter @hubris/web dev &
+pnpm --filter @zkhub/web dev &
 PIDS+=("$!")
 
 wait -n

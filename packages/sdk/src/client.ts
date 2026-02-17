@@ -1,6 +1,6 @@
 import { createPublicClient, http, type PublicClient, type WalletClient } from "viem";
 import { base, optimism } from "viem/chains";
-import { HubMoneyMarketAbi, HubRiskManagerAbi } from "@hubris/abis";
+import { HubMoneyMarketAbi, HubRiskManagerAbi } from "@zkhub/abis";
 import type { Intent, IntentLifecycle, ProtocolAddresses } from "./types";
 import { getIntentTypedData } from "./eip712";
 

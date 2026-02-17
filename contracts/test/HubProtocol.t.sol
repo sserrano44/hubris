@@ -37,7 +37,7 @@ contract HubProtocolTest is TestBase {
     uint256 internal constant RELAYER_PK = 0xB0B;
     uint256 internal constant BRIDGE_PK = 0xCAFE;
 
-    bytes internal constant DEV_PROOF = "HUBRIS_DEV_PROOF";
+    bytes internal constant DEV_PROOF = "ZKHUB_DEV_PROOF";
 
     address internal user;
     address internal relayer;
@@ -1094,7 +1094,7 @@ contract HubProtocolTest is TestBase {
     function _domainSeparatorFor(uint256 chainId, address verifyingContract) internal pure returns (bytes32) {
         bytes32 typeHash =
             keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-        bytes32 nameHash = keccak256(bytes("HubrisIntentInbox"));
+        bytes32 nameHash = keccak256(bytes("ZkHubIntentInbox"));
         bytes32 versionHash = keccak256(bytes("1"));
         return keccak256(abi.encode(typeHash, nameHash, versionHash, chainId, verifyingContract));
     }

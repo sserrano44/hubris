@@ -12,7 +12,7 @@ import {
   type Address
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { HubSettlementAbi } from "@hubris/abis";
+import { HubSettlementAbi } from "@zkhub/abis";
 import { buildBatch } from "./batch";
 import { CircuitProofProvider, DevProofProvider, type ProofProvider } from "./proof";
 import type { QueuedAction } from "./types";
@@ -24,14 +24,14 @@ import {
 
 type RequestWithMeta = express.Request & { rawBody?: string; requestId?: string };
 
-const runtimeEnv = (process.env.HUBRIS_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const runtimeEnv = (process.env.ZKHUB_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
 const isProduction = runtimeEnv === "production";
 const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
 const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
-const internalCallerHeader = "x-hubris-internal-service";
+const internalCallerHeader = "x-zkhub-internal-service";
 const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "prover";
 const internalRequirePrivateIp =
   (process.env.INTERNAL_API_REQUIRE_PRIVATE_IP ?? (isProduction ? "1" : "0")) !== "0";
@@ -67,7 +67,7 @@ app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type,x-request-id,x-hubris-internal-ts,x-hubris-internal-sig,x-hubris-internal-service"
+    "content-type,x-request-id,x-zkhub-internal-ts,x-zkhub-internal-sig,x-zkhub-internal-service"
   );
   if (req.method === "OPTIONS") {
     res.status(204).end();
@@ -405,8 +405,8 @@ async function postInternal(baseUrl: string, routePath: string, body: Record<str
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-hubris-internal-ts": timestamp,
-        "x-hubris-internal-sig": signature,
+        "x-zkhub-internal-ts": timestamp,
+        "x-zkhub-internal-sig": signature,
         [internalCallerHeader]: internalServiceName
       },
       body: rawBody,
@@ -435,8 +435,8 @@ function signInternalRequest(method: string, routePath: string, rawBody: string)
 
 function requireInternalAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const request = req as RequestWithMeta;
-  const timestamp = req.header("x-hubris-internal-ts");
-  const signature = req.header("x-hubris-internal-sig");
+  const timestamp = req.header("x-zkhub-internal-ts");
+  const signature = req.header("x-zkhub-internal-sig");
   const callerService = req.header(internalCallerHeader)?.trim();
 
   if (!timestamp || !signature || !callerService) {

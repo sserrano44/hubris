@@ -38,7 +38,7 @@ contract ForkCrossChainE2ETest is TestBase {
     uint256 internal constant RELAYER_PK = 0xB0B;
     uint256 internal constant BRIDGE_PK = 0xCAFE;
 
-    bytes internal constant DEV_PROOF = "HUBRIS_DEV_PROOF";
+    bytes internal constant DEV_PROOF = "ZKHUB_DEV_PROOF";
 
     // Canonical Base WETH.
     address internal constant BASE_WETH = 0x4200000000000000000000000000000000000006;

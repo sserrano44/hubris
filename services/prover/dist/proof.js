@@ -7,7 +7,7 @@ import { deriveActionIds, MAX_BATCH_ACTIONS, toField } from "./hash";
 export class DevProofProvider {
     async prove(batch) {
         return {
-            proof: stringToHex("HUBRIS_DEV_PROOF"),
+            proof: stringToHex("ZKHUB_DEV_PROOF"),
             publicInputs: expectedPublicInputs(batch)
         };
     }
@@ -21,7 +21,7 @@ export class CircuitProofProvider {
         ?? path.join(this.circuitArtifactsDir, "SettlementBatchRoot_js", "SettlementBatchRoot.wasm");
     zkeyPath = process.env.PROVER_CIRCUIT_ZKEY_PATH
         ?? path.join(this.circuitArtifactsDir, "SettlementBatchRoot_final.zkey");
-    tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "hubris-prover");
+    tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "zkhub-prover");
     keepTmp = process.env.PROVER_KEEP_TMP_FILES === "1";
     async prove(batch) {
         fs.mkdirSync(this.tmpRoot, { recursive: true });

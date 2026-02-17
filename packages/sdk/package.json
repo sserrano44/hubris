@@ -1,5 +1,5 @@
 {
-  "name": "@hubris/sdk",
+  "name": "@zkhub/sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,10 +8,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build --watch",
-    "test": "echo 'No tests for @hubris/sdk'"
+    "test": "echo 'No tests for @zkhub/sdk'"
   },
   "dependencies": {
-    "@hubris/abis": "workspace:*",
+    "@zkhub/abis": "workspace:*",
     "viem": "^2.23.2"
   },
   "devDependencies": {

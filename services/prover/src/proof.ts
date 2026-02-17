@@ -13,7 +13,7 @@ export interface ProofProvider {
 export class DevProofProvider implements ProofProvider {
   async prove(batch: SettlementBatchPayload) {
     return {
-      proof: stringToHex("HUBRIS_DEV_PROOF") as `0x${string}`,
+      proof: stringToHex("ZKHUB_DEV_PROOF") as `0x${string}`,
       publicInputs: expectedPublicInputs(batch)
     };
   }
@@ -31,7 +31,7 @@ export class CircuitProofProvider implements ProofProvider {
   private readonly zkeyPath =
     process.env.PROVER_CIRCUIT_ZKEY_PATH
     ?? path.join(this.circuitArtifactsDir, "SettlementBatchRoot_final.zkey");
-  private readonly tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "hubris-prover");
+  private readonly tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "zkhub-prover");
   private readonly keepTmp = process.env.PROVER_KEEP_TMP_FILES === "1";
 
   async prove(batch: SettlementBatchPayload): Promise<{ proof: `0x${string}`; publicInputs: bigint[] }> {

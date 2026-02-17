@@ -20,10 +20,10 @@ importers:
 
   apps/web:
     dependencies:
-      '@hubris/abis':
+      '@zkhub/abis':
         specifier: workspace:*
         version: link:../../packages/abis
-      '@hubris/sdk':
+      '@zkhub/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       '@tanstack/react-query':
@@ -66,7 +66,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@hubris/abis':
+      '@zkhub/abis':
         specifier: workspace:*
         version: link:../abis
       viem:
@@ -79,7 +79,7 @@ importers:
 
   services/indexer:
     dependencies:
-      '@hubris/sdk':
+      '@zkhub/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       express:
@@ -101,7 +101,7 @@ importers:
 
   services/prover:
     dependencies:
-      '@hubris/abis':
+      '@zkhub/abis':
         specifier: workspace:*
         version: link:../../packages/abis
       express:
@@ -126,10 +126,10 @@ importers:
 
   services/relayer:
     dependencies:
-      '@hubris/abis':
+      '@zkhub/abis':
         specifier: workspace:*
         version: link:../../packages/abis
-      '@hubris/sdk':
+      '@zkhub/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       express:

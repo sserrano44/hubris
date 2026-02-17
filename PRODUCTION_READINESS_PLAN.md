@@ -1,4 +1,4 @@
-# Hubris V2 Production Readiness Plan
+# zkhub Production Readiness Plan
 
 This plan closes the remaining gaps between the current MVP and production deployment on Base (hub) + Worldchain (spoke).
 
@@ -114,7 +114,7 @@ Implemented:
 7. Production fail-closed startup checks now reject default internal auth secrets.
 8. Production fail-closed startup checks now reject `CORS_ALLOW_ORIGIN=*`.
 9. Internal auth key rotation support added via `INTERNAL_API_AUTH_PREVIOUS_SECRET`.
-10. Signed caller identity (`x-hubris-internal-service`) added and verified on `/internal/*`.
+10. Signed caller identity (`x-zkhub-internal-service`) added and verified on `/internal/*`.
 11. Caller allowlists added via `INTERNAL_API_ALLOWED_SERVICES`.
 12. Internal network gating added for `/internal/*`:
     - private-IP requirement by default in production

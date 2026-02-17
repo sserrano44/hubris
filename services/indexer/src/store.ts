@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { IntentLifecycle, IntentStatus } from "@hubris/sdk";
+import type { IntentLifecycle, IntentStatus } from "@zkhub/sdk";
 
 export type DepositState = {
   depositId: number;

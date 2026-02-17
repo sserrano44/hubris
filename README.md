@@ -1,4 +1,6 @@
-HubrisDefi
+zkhub
+
+Official site: `https://zkhub.finance`
 
 Multi-chain intent-based DeFi money market with hub-side accounting on Base and spoke execution on other L2s.
 
@@ -270,7 +272,7 @@ Optional env overrides for prepare script:
 4. `ENABLE_FORGE_BROADCAST` (default `1`; set `0` only for debug dry-runs)
 
 ## CI
-- GitHub Actions workflow: `/Users/sebas/projects/HubrisV2/.github/workflows/ci.yml`
+- GitHub Actions workflow: `/Users/sebas/projects/zkhub/.github/workflows/ci.yml`
 - Jobs:
   - `contracts`: `forge build` + `forge test --offline`
   - `monorepo-build`: install deps, regenerate ABIs, build all workspaces
@@ -290,7 +292,7 @@ After local deploy:
 - copied to `apps/web/public/deployments/local.json`
 
 ## ZK mode notes
-- Local dev uses `DEV_MODE=true` verifier with proof payload `HUBRIS_DEV_PROOF`.
+- Local dev uses `DEV_MODE=true` verifier with proof payload `ZKHUB_DEV_PROOF`.
 - Production mode requires deploying `Verifier` with:
   - `DEV_MODE=false`
   - non-zero `initialGroth16Verifier`
@@ -325,8 +327,8 @@ After local deploy:
 - Bridge integration is mocked locally; production must use canonical bridge adapters and real event commitments.
 
 ## Production readiness
-- Detailed execution plan: `/Users/sebas/projects/HubrisV2/PRODUCTION_READINESS_PLAN.md`
-- Detailed technical specification: `/Users/sebas/projects/HubrisV2/TECHNICAL_SPEC.md`
+- Detailed execution plan: `/Users/sebas/projects/zkhub/PRODUCTION_READINESS_PLAN.md`
+- Detailed technical specification: `/Users/sebas/projects/zkhub/TECHNICAL_SPEC.md`
 
 ## Operational notes
 - If your shell cannot write to default Corepack/Pnpm home directories, set:

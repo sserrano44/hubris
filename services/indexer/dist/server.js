@@ -151,8 +151,8 @@ app.listen(port, () => {
 });
 function requireInternalAuth(req, res, next) {
     const request = req;
-    const timestamp = req.header("x-hubris-internal-ts");
-    const signature = req.header("x-hubris-internal-sig");
+    const timestamp = req.header("x-zkhub-internal-ts");
+    const signature = req.header("x-zkhub-internal-sig");
     if (!timestamp || !signature) {
         auditLog(request, "internal_auth_rejected", { reason: "missing_headers" });
         res.status(401).json({ error: "missing_internal_auth_headers" });

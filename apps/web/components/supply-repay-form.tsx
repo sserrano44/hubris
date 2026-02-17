@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { parseUnits } from "viem";
 import { useAccount, useWriteContract } from "wagmi";
-import { MockERC20Abi, SpokePortalAbi } from "@hubris/abis";
+import { MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
 import { useDeployments } from "../lib/runtime-config";
 
 export function SupplyRepayForm({ mode }: { mode: "supply" | "repay" }) {
