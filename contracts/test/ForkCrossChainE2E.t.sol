@@ -265,7 +265,7 @@ contract ForkCrossChainE2ETest is TestBase {
         inbox.setConsumer(address(lockManager), true);
         lockManager.setSettlement(address(settlement));
 
-        custody.grantRole(custody.BRIDGE_ROLE(), bridgeOperator);
+        custody.grantRole(custody.CANONICAL_BRIDGE_RECEIVER_ROLE(), bridgeOperator);
         custody.grantRole(custody.SETTLEMENT_ROLE(), address(settlement));
         settlement.grantRole(settlement.RELAYER_ROLE(), relayer);
 

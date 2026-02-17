@@ -12,6 +12,8 @@ import HubSettlementJson from "./generated/HubSettlement.json";
 export const HubSettlementAbi = HubSettlementJson as Abi;
 import HubCustodyJson from "./generated/HubCustody.json";
 export const HubCustodyAbi = HubCustodyJson as Abi;
+import CanonicalBridgeReceiverAdapterJson from "./generated/CanonicalBridgeReceiverAdapter.json";
+export const CanonicalBridgeReceiverAdapterAbi = CanonicalBridgeReceiverAdapterJson as Abi;
 import TokenRegistryJson from "./generated/TokenRegistry.json";
 export const TokenRegistryAbi = TokenRegistryJson as Abi;
 import KinkInterestRateModelJson from "./generated/KinkInterestRateModel.json";

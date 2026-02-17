@@ -248,10 +248,15 @@ async function main() {
     custody,
     lockManager
   ]);
+  const canonicalBridgeReceiver = await deploy(hubWallet, hubPublic, "CanonicalBridgeReceiverAdapter", [
+    deployer.address,
+    custody
+  ]);
 
   console.log("Deploying spoke protocol...");
   const spokePortal = await deploy(spokeWallet, spokePublic, "SpokePortal", [deployer.address, BigInt(HUB_CHAIN_ID)]);
-  const spokeBridgeAdapter = await deploy(spokeWallet, spokePublic, "MockBridgeAdapter", [deployer.address]);
+  const spokeCanonicalBridge = await deploy(spokeWallet, spokePublic, "MockCanonicalTokenBridge", []);
+  const spokeBridgeAdapter = await deploy(spokeWallet, spokePublic, "CanonicalBridgeAdapter", [deployer.address]);
 
   const tokenRegistryAbi = loadArtifact("TokenRegistry").abi;
   const riskAbi = loadArtifact("HubRiskManager").abi;
@@ -259,12 +264,14 @@ async function main() {
   const inboxAbi = loadArtifact("HubIntentInbox").abi;
   const lockAbi = loadArtifact("HubLockManager").abi;
   const custodyAbi = loadArtifact("HubCustody").abi;
+  const canonicalReceiverAbi = loadArtifact("CanonicalBridgeReceiverAdapter").abi;
   const settlementAbi = loadArtifact("HubSettlement").abi;
   const portalAbi = loadArtifact("SpokePortal").abi;
+  const canonicalBridgeAdapterAbi = loadArtifact("CanonicalBridgeAdapter").abi;
   const erc20Abi = loadArtifact("MockERC20").abi;
   const oracleAbi = loadArtifact("MockOracle").abi;
 
-  const bridgeAdapterId = keccak256(stringToHex("mock-bridge"));
+  const bridgeAdapterId = keccak256(stringToHex("canonical-bridge"));
   const riskBase = [7500n, 8000n, 10500n];
 
   const tokenRows = [
@@ -322,31 +329,56 @@ async function main() {
   await write(hubWallet, hubPublic, { address: intentInbox, abi: inboxAbi, functionName: "setConsumer", args: [lockManager, true] });
   await write(hubWallet, hubPublic, { address: lockManager, abi: lockAbi, functionName: "setSettlement", args: [settlement] });
 
-  const BRIDGE_ROLE = keccak256(stringToHex("BRIDGE_ROLE"));
+  const CANONICAL_BRIDGE_RECEIVER_ROLE = keccak256(stringToHex("CANONICAL_BRIDGE_RECEIVER_ROLE"));
   const SETTLEMENT_ROLE = keccak256(stringToHex("SETTLEMENT_ROLE"));
   const RELAYER_ROLE = keccak256(stringToHex("RELAYER_ROLE"));
+  const ATTESTER_ROLE = keccak256(stringToHex("ATTESTER_ROLE"));
 
-  await write(hubWallet, hubPublic, { address: custody, abi: custodyAbi, functionName: "grantRole", args: [BRIDGE_ROLE, bridge.address] });
+  await write(hubWallet, hubPublic, {
+    address: custody,
+    abi: custodyAbi,
+    functionName: "grantRole",
+    args: [CANONICAL_BRIDGE_RECEIVER_ROLE, canonicalBridgeReceiver]
+  });
   await write(hubWallet, hubPublic, { address: custody, abi: custodyAbi, functionName: "grantRole", args: [SETTLEMENT_ROLE, settlement] });
   await write(hubWallet, hubPublic, { address: settlement, abi: settlementAbi, functionName: "grantRole", args: [RELAYER_ROLE, relayer.address] });
+  await write(hubWallet, hubPublic, {
+    address: canonicalBridgeReceiver,
+    abi: canonicalReceiverAbi,
+    functionName: "grantRole",
+    args: [ATTESTER_ROLE, relayer.address]
+  });
 
   await write(spokeWallet, spokePublic, { address: spokePortal, abi: portalAbi, functionName: "setBridgeAdapter", args: [spokeBridgeAdapter] });
   await write(spokeWallet, spokePublic, { address: spokePortal, abi: portalAbi, functionName: "setHubRecipient", args: [custody] });
+  await write(spokeWallet, spokePublic, {
+    address: spokeBridgeAdapter,
+    abi: canonicalBridgeAdapterAbi,
+    functionName: "setAllowedCaller",
+    args: [spokePortal, true]
+  });
+  for (const row of tokenRows) {
+    await write(spokeWallet, spokePublic, {
+      address: spokeBridgeAdapter,
+      abi: canonicalBridgeAdapterAbi,
+      functionName: "setRoute",
+      args: [row.spoke, spokeCanonicalBridge, row.hub, 300_000, true]
+    });
+  }
 
   console.log("Seeding liquidity + relayer inventory...");
   for (const row of tokenRows) {
     await write(hubWallet, hubPublic, {
       address: row.hub,
       abi: erc20Abi,
-      functionName: "setMinter",
-      args: [bridge.address, true]
+      functionName: "mint",
+      args: [moneyMarket, parseUnits("1000000", row.decimals)]
     });
-
     await write(hubWallet, hubPublic, {
       address: row.hub,
       abi: erc20Abi,
       functionName: "mint",
-      args: [moneyMarket, parseUnits("1000000", row.decimals)]
+      args: [custody, parseUnits("1000000", row.decimals)]
     });
 
     await write(spokeWallet, spokePublic, {
@@ -368,6 +400,7 @@ async function main() {
       intentInbox,
       lockManager,
       custody,
+      canonicalBridgeReceiver,
       verifierDevMode: HUB_VERIFIER_DEV_MODE,
       groth16Verifier,
       groth16VerifierAdapter,
@@ -378,7 +411,8 @@ async function main() {
       network: SPOKE_NETWORK,
       chainId: SPOKE_CHAIN_ID,
       portal: spokePortal,
-      bridgeAdapter: spokeBridgeAdapter
+      bridgeAdapter: spokeBridgeAdapter,
+      canonicalBridge: spokeCanonicalBridge
     },
     tokens: {
       WETH: { hub: hubWeth, spoke: spokeWeth, decimals: 18 },
@@ -411,11 +445,14 @@ SPOKE_${SPOKE_ENV_PREFIX}_CHAIN_ID=${SPOKE_CHAIN_ID}
 HUB_LOCK_MANAGER_ADDRESS=${lockManager}
 HUB_SETTLEMENT_ADDRESS=${settlement}
 HUB_CUSTODY_ADDRESS=${custody}
+HUB_CANONICAL_BRIDGE_RECEIVER_ADDRESS=${canonicalBridgeReceiver}
 SPOKE_PORTAL_ADDRESS=${spokePortal}
+SPOKE_CANONICAL_BRIDGE_ADDRESS=${spokeCanonicalBridge}
 
 RELAYER_PRIVATE_KEY=${RELAYER_PRIVATE_KEY}
 BRIDGE_PRIVATE_KEY=${BRIDGE_PRIVATE_KEY}
 PROVER_PRIVATE_KEY=${PROVER_PRIVATE_KEY}
+RELAYER_BRIDGE_FINALITY_BLOCKS=0
 
 SPOKE_TO_HUB_TOKEN_MAP=${JSON.stringify(spokeToHubMap)}
 

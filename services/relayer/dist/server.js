@@ -3,8 +3,9 @@ import path from "node:path";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import express from "express";
 import { z } from "zod";
-import { createPublicClient, createWalletClient, encodeAbiParameters, http, keccak256, parseAbiItem, privateKeyToAccount } from "viem";
-import { HubLockManagerAbi, HubSettlementAbi, HubCustodyAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
+import { createPublicClient, createWalletClient, decodeAbiParameters, defineChain, encodeAbiParameters, http, keccak256, parseAbi, parseAbiItem } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { HubLockManagerAbi, HubSettlementAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
 var IntentType;
 (function (IntentType) {
     IntentType[IntentType["SUPPLY"] = 1] = "SUPPLY";
@@ -12,7 +13,15 @@ var IntentType;
     IntentType[IntentType["BORROW"] = 3] = "BORROW";
     IntentType[IntentType["WITHDRAW"] = 4] = "WITHDRAW";
 })(IntentType || (IntentType = {}));
+const runtimeEnv = (process.env.ZKHUB_ENV ?? process.env.NODE_ENV ?? "development").toLowerCase();
+const isProduction = runtimeEnv === "production";
+const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
+const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET
+    ?? (isProduction ? "" : "dev-internal-auth-secret");
+const internalCallerHeader = "x-zkhub-internal-service";
+const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "relayer";
 const app = express();
+app.set("json replacer", (_key, value) => (typeof value === "bigint" ? value.toString() : value));
 app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
     const requestId = req.header("x-request-id")?.trim() || randomUUID();
@@ -21,7 +30,7 @@ app.use((req, res, next) => {
     next();
 });
 app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ALLOW_ORIGIN ?? "*");
+    res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id");
     if (req.method === "OPTIONS") {
@@ -33,36 +42,60 @@ app.use((req, res, next) => {
 const port = Number(process.env.RELAYER_PORT ?? 3040);
 const hubRpc = process.env.HUB_RPC_URL ?? "http://127.0.0.1:8545";
 const spokeRpc = process.env.SPOKE_RPC_URL ?? "http://127.0.0.1:9545";
+const hubChainId = BigInt(process.env.HUB_CHAIN_ID ?? "8453");
+const spokeChainId = BigInt(process.env.SPOKE_CHAIN_ID ?? "480");
 const lockManagerAddress = process.env.HUB_LOCK_MANAGER_ADDRESS;
 const settlementAddress = process.env.HUB_SETTLEMENT_ADDRESS;
 const custodyAddress = process.env.HUB_CUSTODY_ADDRESS;
+const canonicalReceiverAddress = process.env.HUB_CANONICAL_BRIDGE_RECEIVER_ADDRESS;
 const portalAddress = process.env.SPOKE_PORTAL_ADDRESS;
+const spokeCanonicalBridgeAddress = process.env.SPOKE_CANONICAL_BRIDGE_ADDRESS;
 const relayerKey = process.env.RELAYER_PRIVATE_KEY;
-const bridgeKey = process.env.BRIDGE_PRIVATE_KEY || relayerKey;
 const indexerApi = process.env.INDEXER_API_URL ?? "http://127.0.0.1:3030";
 const proverApi = process.env.PROVER_API_URL ?? "http://127.0.0.1:3050";
-const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET ?? "dev-internal-auth-secret";
 const relayerInitialBackfillBlocks = BigInt(process.env.RELAYER_INITIAL_BACKFILL_BLOCKS ?? "2000");
 const relayerMaxLogRange = BigInt(process.env.RELAYER_MAX_LOG_RANGE ?? "2000");
+const relayerBridgeFinalityBlocks = BigInt(process.env.RELAYER_BRIDGE_FINALITY_BLOCKS ?? "0");
 const apiRateWindowMs = Number(process.env.API_RATE_WINDOW_MS ?? "60000");
 const apiRateMaxRequests = Number(process.env.API_RATE_MAX_REQUESTS ?? "1200");
 const rateBuckets = new Map();
 const spokeToHub = JSON.parse(process.env.SPOKE_TO_HUB_TOKEN_MAP ?? "{}");
-if (!lockManagerAddress || !settlementAddress || !custodyAddress || !portalAddress || !relayerKey) {
+if (!lockManagerAddress
+    || !settlementAddress
+    || !custodyAddress
+    || !canonicalReceiverAddress
+    || !portalAddress
+    || !spokeCanonicalBridgeAddress
+    || !relayerKey) {
     throw new Error("Missing required relayer env vars for deployed addresses/private key");
 }
-if (internalAuthSecret === "dev-internal-auth-secret") {
+validateStartupConfig();
+if (!isProduction && internalAuthSecret === "dev-internal-auth-secret") {
     console.warn("Relayer is using default INTERNAL_API_AUTH_SECRET. Override it before production.");
 }
 const relayerAccount = privateKeyToAccount(relayerKey);
-const bridgeAccount = privateKeyToAccount(bridgeKey);
-const hubPublic = createPublicClient({ transport: http(hubRpc) });
-const spokePublic = createPublicClient({ transport: http(spokeRpc) });
-const hubWallet = createWalletClient({ account: relayerAccount, transport: http(hubRpc) });
-const spokeWallet = createWalletClient({ account: relayerAccount, transport: http(spokeRpc) });
-const bridgeWallet = createWalletClient({ account: bridgeAccount, transport: http(hubRpc) });
+const hubChain = defineChain({
+    id: Number(hubChainId),
+    name: "Hub",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [hubRpc] } }
+});
+const spokeChain = defineChain({
+    id: Number(spokeChainId),
+    name: "Spoke",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: { default: { http: [spokeRpc] } }
+});
+const hubPublic = createPublicClient({ chain: hubChain, transport: http(hubRpc) });
+const spokePublic = createPublicClient({ chain: spokeChain, transport: http(spokeRpc) });
+const hubWallet = createWalletClient({ account: relayerAccount, chain: hubChain, transport: http(hubRpc) });
+const spokeWallet = createWalletClient({ account: relayerAccount, chain: spokeChain, transport: http(spokeRpc) });
+const canonicalBridgeReceiverAbi = parseAbi([
+    "function forwardBridgedDeposit(uint256 depositId,uint8 intentType,address user,address hubAsset,uint256 amount,uint256 originChainId,bytes32 originTxHash,uint256 originLogIndex)"
+]);
 const trackingPath = process.env.RELAYER_TRACKING_PATH ?? path.join(process.cwd(), "data", "relayer-tracking.json");
 const tracking = loadTracking(trackingPath);
+let isPollingSpokeDeposits = false;
 const submitSchema = z.object({
     intent: z.object({
         intentType: z.number().int().min(1).max(4),
@@ -87,7 +120,13 @@ app.get("/health", (_req, res) => {
         relayer: relayerAccount.address,
         hubRpc,
         spokeRpc,
-        tracking
+        hubChainId: hubChainId.toString(),
+        canonicalReceiverAddress,
+        spokeCanonicalBridgeAddress,
+        bridgeFinalityBlocks: relayerBridgeFinalityBlocks.toString(),
+        tracking: {
+            lastSpokeBlock: tracking.lastSpokeBlock.toString()
+        }
     });
 });
 app.get("/quote", (req, res) => {
@@ -229,99 +268,167 @@ function rawIntentId(intent) {
     ], [intent]));
 }
 async function pollSpokeDeposits() {
-    const toBlock = await spokePublic.getBlockNumber();
-    if (toBlock < tracking.lastSpokeBlock) {
-        // Local anvil restarts can rewind chain height; restart scanning from genesis.
-        tracking.lastSpokeBlock = 0n;
-    }
-    if (tracking.lastSpokeBlock === 0n && toBlock > relayerInitialBackfillBlocks) {
-        tracking.lastSpokeBlock = toBlock - relayerInitialBackfillBlocks;
-    }
-    const fromBlock = tracking.lastSpokeBlock + 1n;
-    if (toBlock < fromBlock)
+    if (isPollingSpokeDeposits)
         return;
-    const rangeToBlock = fromBlock + relayerMaxLogRange - 1n < toBlock ? fromBlock + relayerMaxLogRange - 1n : toBlock;
-    auditLog(undefined, "poll_range", {
-        fromBlock: fromBlock.toString(),
-        toBlock: rangeToBlock.toString(),
-        latest: toBlock.toString()
-    });
-    const supplyLogs = await spokePublic.getLogs({
-        address: portalAddress,
-        event: parseAbiItem("event SupplyInitiated(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 hubChainId, uint256 timestamp)"),
-        fromBlock,
-        toBlock: rangeToBlock
-    });
-    const repayLogs = await spokePublic.getLogs({
-        address: portalAddress,
-        event: parseAbiItem("event RepayInitiated(uint256 indexed depositId, address indexed user, address indexed token, uint256 amount, uint256 hubChainId, uint256 timestamp)"),
-        fromBlock,
-        toBlock: rangeToBlock
-    });
-    for (const log of supplyLogs) {
-        await handleDepositLog(log.args.depositId, log.args.user, log.args.token, log.args.amount, IntentType.SUPPLY);
-    }
-    for (const log of repayLogs) {
-        await handleDepositLog(log.args.depositId, log.args.user, log.args.token, log.args.amount, IntentType.REPAY);
-    }
-    tracking.lastSpokeBlock = rangeToBlock;
-    saveTracking(trackingPath, tracking);
-}
-async function handleDepositLog(depositId, user, spokeToken, amount, intentType) {
-    const hubToken = spokeToHub[spokeToken.toLowerCase()];
-    if (!hubToken) {
-        console.warn(`Skipping deposit ${depositId.toString()} with unmapped token ${spokeToken}`);
-        return;
-    }
-    const existing = await fetch(`${indexerApi}/deposits/${depositId.toString()}`).catch(() => null);
-    if (existing && existing.ok) {
-        const payload = (await existing.json());
-        if (payload.status === "settled" || payload.status === "bridged") {
-            return;
+    isPollingSpokeDeposits = true;
+    try {
+        const latestBlock = await spokePublic.getBlockNumber();
+        if (latestBlock < tracking.lastSpokeBlock) {
+            // Local anvil restarts can rewind chain height; restart scanning from genesis.
+            tracking.lastSpokeBlock = 0n;
         }
+        const finalizedToBlock = latestBlock > relayerBridgeFinalityBlocks
+            ? latestBlock - relayerBridgeFinalityBlocks
+            : 0n;
+        if (finalizedToBlock == 0n)
+            return;
+        if (tracking.lastSpokeBlock === 0n && finalizedToBlock > relayerInitialBackfillBlocks) {
+            tracking.lastSpokeBlock = finalizedToBlock - relayerInitialBackfillBlocks;
+        }
+        const fromBlock = tracking.lastSpokeBlock + 1n;
+        if (finalizedToBlock < fromBlock)
+            return;
+        const rangeToBlock = fromBlock + relayerMaxLogRange - 1n < finalizedToBlock
+            ? fromBlock + relayerMaxLogRange - 1n
+            : finalizedToBlock;
+        auditLog(undefined, "poll_range", {
+            fromBlock: fromBlock.toString(),
+            toBlock: rangeToBlock.toString(),
+            latest: latestBlock.toString(),
+            finalizedToBlock: finalizedToBlock.toString()
+        });
+        const canonicalBridgeLogs = await spokePublic.getLogs({
+            address: spokeCanonicalBridgeAddress,
+            event: parseAbiItem("event BridgeCalled(address indexed localToken, address indexed remoteToken, address indexed recipient, uint256 amount, uint32 minGasLimit, bytes extraData, address caller)"),
+            fromBlock,
+            toBlock: rangeToBlock
+        });
+        for (const log of canonicalBridgeLogs) {
+            await handleCanonicalBridgeLog(log);
+        }
+        tracking.lastSpokeBlock = rangeToBlock;
+        saveTracking(trackingPath, tracking);
+    }
+    finally {
+        isPollingSpokeDeposits = false;
+    }
+}
+async function handleCanonicalBridgeLog(log) {
+    const localToken = log.args.localToken;
+    const remoteToken = log.args.remoteToken;
+    const recipient = log.args.recipient;
+    const amount = log.args.amount;
+    const extraData = log.args.extraData;
+    const originTxHash = log.transactionHash;
+    const originLogIndex = typeof log.logIndex === "bigint" ? log.logIndex : BigInt(log.logIndex ?? 0);
+    if (!localToken || !remoteToken || !recipient || !extraData || amount === undefined || !originTxHash) {
+        console.warn("Skipping canonical bridge log with missing fields");
+        return;
+    }
+    if (recipient.toLowerCase() !== custodyAddress.toLowerCase()) {
+        return;
+    }
+    let decoded;
+    try {
+        decoded = decodeAbiParameters([
+            { type: "uint256" }, // depositId
+            { type: "uint8" }, // intentType
+            { type: "address" }, // user
+            { type: "address" }, // spoke token
+            { type: "uint256" }, // amount
+            { type: "uint256" }, // origin chain id
+            { type: "uint256" } // hub chain id
+        ], extraData);
+    }
+    catch (error) {
+        console.warn(`Skipping canonical bridge log with undecodable extraData: ${error.message}`);
+        return;
+    }
+    const [depositId, decodedIntentTypeRaw, user, decodedSpokeToken, decodedAmount, originChainId, decodedHubChainId] = decoded;
+    const intentType = Number(decodedIntentTypeRaw);
+    if (intentType !== IntentType.SUPPLY && intentType !== IntentType.REPAY) {
+        return;
+    }
+    if (decodedHubChainId !== hubChainId) {
+        console.warn(`Skipping deposit ${depositId.toString()} due to hub chain mismatch extraData=${decodedHubChainId.toString()} expected=${hubChainId.toString()}`);
+        return;
+    }
+    if (decodedSpokeToken.toLowerCase() !== localToken.toLowerCase()) {
+        console.warn(`Skipping deposit ${depositId.toString()} due to spoke token mismatch in extraData`);
+        return;
+    }
+    if (decodedAmount !== amount) {
+        console.warn(`Skipping deposit ${depositId.toString()} due to amount mismatch in extraData`);
+        return;
+    }
+    const mappedHubToken = spokeToHub[decodedSpokeToken.toLowerCase()];
+    if (mappedHubToken && mappedHubToken.toLowerCase() !== remoteToken.toLowerCase()) {
+        console.warn(`Skipping deposit ${depositId.toString()} due to hub token mismatch map=${mappedHubToken} bridge=${remoteToken}`);
+        return;
+    }
+    const hubToken = (mappedHubToken ?? remoteToken);
+    if (!hubToken) {
+        console.warn(`Skipping deposit ${depositId.toString()} due to missing hub token`);
+        return;
+    }
+    const status = await fetchDepositStatus(depositId);
+    if (status === "settled" || status === "bridged") {
+        return;
     }
     await postInternal(indexerApi, "/internal/deposits/upsert", {
         depositId: Number(depositId),
         user,
-        intentType,
+        intentType: intentType,
         token: hubToken,
         amount: amount.toString(),
-        status: "initiated"
+        status: "initiated",
+        metadata: {
+            canonicalBridgeTx: originTxHash,
+            canonicalBridgeLogIndex: originLogIndex.toString(),
+            canonicalBridge: spokeCanonicalBridgeAddress
+        }
     });
-    // Mock bridge: mint equivalent hub token + register bridged deposit into custody.
-    let mintTx = "0x";
     let registerTx = "0x";
     try {
-        mintTx = await bridgeWallet.writeContract({
-            abi: MockERC20Abi,
-            address: hubToken,
-            functionName: "mint",
-            args: [custodyAddress, amount],
-            account: bridgeAccount
-        });
-        await hubPublic.waitForTransactionReceipt({ hash: mintTx });
-        registerTx = await bridgeWallet.writeContract({
-            abi: HubCustodyAbi,
-            address: custodyAddress,
-            functionName: "registerBridgedDeposit",
-            args: [depositId, intentType, user, hubToken, amount],
-            account: bridgeAccount
+        registerTx = await hubWallet.writeContract({
+            abi: canonicalBridgeReceiverAbi,
+            address: canonicalReceiverAddress,
+            functionName: "forwardBridgedDeposit",
+            args: [
+                depositId,
+                intentType,
+                user,
+                hubToken,
+                amount,
+                originChainId,
+                originTxHash,
+                originLogIndex
+            ],
+            account: relayerAccount
         });
         await hubPublic.waitForTransactionReceipt({ hash: registerTx });
     }
     catch (error) {
-        console.warn(`Bridge registration skipped for deposit ${depositId.toString()}: ${error.message}`);
+        console.warn(`Canonical bridge attestation registration failed for deposit ${depositId.toString()}: ${error.message}`);
+        return;
+    }
+    const latestStatus = await fetchDepositStatus(depositId);
+    if (latestStatus === "settled" || latestStatus === "bridged") {
+        return;
     }
     await postInternal(indexerApi, "/internal/deposits/upsert", {
         depositId: Number(depositId),
         user,
-        intentType,
+        intentType: intentType,
         token: hubToken,
         amount: amount.toString(),
         status: "bridged",
         metadata: {
-            mintTx,
-            registerTx
+            registerTx,
+            canonicalBridgeTx: originTxHash,
+            canonicalBridgeLogIndex: originLogIndex.toString(),
+            canonicalBridge: spokeCanonicalBridgeAddress,
+            originChainId: originChainId.toString()
         }
     });
     await enqueueProverAction({
@@ -331,6 +438,13 @@ async function handleDepositLog(depositId, user, spokeToken, amount, intentType)
         hubAsset: hubToken,
         amount: amount.toString()
     });
+}
+async function fetchDepositStatus(depositId) {
+    const existing = await fetch(`${indexerApi}/deposits/${depositId.toString()}`).catch(() => null);
+    if (!existing || !existing.ok)
+        return undefined;
+    const payload = (await existing.json());
+    return payload.status;
 }
 async function enqueueProverAction(body) {
     await postInternal(proverApi, "/internal/enqueue", body);
@@ -388,7 +502,8 @@ async function postInternal(baseUrl, routePath, body) {
             headers: {
                 "content-type": "application/json",
                 "x-zkhub-internal-ts": timestamp,
-                "x-zkhub-internal-sig": signature
+                "x-zkhub-internal-sig": signature,
+                [internalCallerHeader]: internalServiceName
             },
             body: rawBody,
             signal: controller.signal
@@ -403,12 +518,12 @@ async function postInternal(baseUrl, routePath, body) {
 }
 function signInternalRequest(method, routePath, rawBody) {
     const timestamp = Date.now().toString();
-    const signature = computeInternalSignature(internalAuthSecret, method, routePath, timestamp, rawBody);
+    const signature = computeInternalSignature(internalAuthSecret, method, routePath, timestamp, internalServiceName, rawBody);
     return { timestamp, signature };
 }
-function computeInternalSignature(secret, method, routePath, timestamp, rawBody) {
+function computeInternalSignature(secret, method, routePath, timestamp, callerService, rawBody) {
     const bodyHash = createHash("sha256").update(rawBody).digest("hex");
-    const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${bodyHash}`;
+    const payload = `${method.toUpperCase()}\n${routePath}\n${timestamp}\n${callerService}\n${bodyHash}`;
     return createHmac("sha256", secret).update(payload).digest("hex");
 }
 function rateLimitMiddleware(req, res, next) {
@@ -445,5 +560,28 @@ function auditLog(req, action, fields) {
         }
     }
     console.log(JSON.stringify(payload));
+}
+function validateStartupConfig() {
+    if (!internalAuthSecret) {
+        throw new Error("Missing INTERNAL_API_AUTH_SECRET");
+    }
+    if (!internalServiceName) {
+        throw new Error("INTERNAL_API_SERVICE_NAME cannot be empty");
+    }
+    if (isProduction && internalAuthSecret === "dev-internal-auth-secret") {
+        throw new Error("INTERNAL_API_AUTH_SECRET cannot use dev default in production");
+    }
+    if (isProduction && corsAllowOrigin.trim() === "*") {
+        throw new Error("CORS_ALLOW_ORIGIN cannot be '*' in production");
+    }
+    if (relayerBridgeFinalityBlocks < 0n) {
+        throw new Error("RELAYER_BRIDGE_FINALITY_BLOCKS cannot be negative");
+    }
+    if (!canonicalReceiverAddress) {
+        throw new Error("Missing HUB_CANONICAL_BRIDGE_RECEIVER_ADDRESS");
+    }
+    if (!spokeCanonicalBridgeAddress) {
+        throw new Error("Missing SPOKE_CANONICAL_BRIDGE_ADDRESS");
+    }
 }
 //# sourceMappingURL=server.js.map

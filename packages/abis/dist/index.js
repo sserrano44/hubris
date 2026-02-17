@@ -10,6 +10,8 @@ import HubSettlementJson from "./generated/HubSettlement.json";
 export const HubSettlementAbi = HubSettlementJson;
 import HubCustodyJson from "./generated/HubCustody.json";
 export const HubCustodyAbi = HubCustodyJson;
+import CanonicalBridgeReceiverAdapterJson from "./generated/CanonicalBridgeReceiverAdapter.json";
+export const CanonicalBridgeReceiverAdapterAbi = CanonicalBridgeReceiverAdapterJson;
 import TokenRegistryJson from "./generated/TokenRegistry.json";
 export const TokenRegistryAbi = TokenRegistryJson;
 import KinkInterestRateModelJson from "./generated/KinkInterestRateModel.json";

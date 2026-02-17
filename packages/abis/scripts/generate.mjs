@@ -12,6 +12,7 @@ const contracts = [
   "HubLockManager",
   "HubSettlement",
   "HubCustody",
+  "CanonicalBridgeReceiverAdapter",
   "TokenRegistry",
   "KinkInterestRateModel",
   "MockERC20",

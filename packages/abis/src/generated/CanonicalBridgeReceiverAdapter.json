@@ -6,13 +6,18 @@
         "name": "admin",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "custody_",
+        "type": "address",
+        "internalType": "contract HubCustody"
       }
     ],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "CANONICAL_BRIDGE_RECEIVER_ROLE",
+    "name": "ATTESTER_ROLE",
     "inputs": [],
     "outputs": [
       {
@@ -38,152 +43,26 @@
   },
   {
     "type": "function",
-    "name": "SETTLEMENT_ROLE",
+    "name": "custody",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "type": "address",
+        "internalType": "contract HubCustody"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "attestationKeyFor",
-    "inputs": [
-      {
-        "name": "originChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "originTxHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "originLogIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "consumeDepositToMarket",
+    "name": "forwardBridgedDeposit",
     "inputs": [
       {
         "name": "depositId",
         "type": "uint256",
         "internalType": "uint256"
       },
-      {
-        "name": "expectedIntentType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "expectedUser",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expectedHubAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expectedAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "market",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "dep",
-        "type": "tuple",
-        "internalType": "struct HubCustody.BridgedDeposit",
-        "components": [
-          {
-            "name": "intentType",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "user",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "hubAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "consumed",
-            "type": "bool",
-            "internalType": "bool"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "depositAttestationKey",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "deposits",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
       {
         "name": "intentType",
         "type": "uint8",
@@ -205,12 +84,23 @@
         "internalType": "uint256"
       },
       {
-        "name": "consumed",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "originChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "originTxHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "originLogIndex",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -275,54 +165,6 @@
   },
   {
     "type": "function",
-    "name": "registerBridgedDeposit",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "intentType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "hubAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "originChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "originTxHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "originLogIndex",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "renounceRole",
     "inputs": [
       {
@@ -358,46 +200,8 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "usedAttestation",
-    "inputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
-    "name": "BridgedDepositConsumed",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "market",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BridgedDepositRegistered",
+    "name": "CanonicalDepositForwarded",
     "inputs": [
       {
         "name": "depositId",
@@ -446,12 +250,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "attestationKey",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -554,78 +352,7 @@
   },
   {
     "type": "error",
-    "name": "AttestationAlreadyUsed",
-    "inputs": [
-      {
-        "name": "attestationKey",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DepositAlreadyConsumed",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DepositAlreadyExists",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DepositMismatch",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DepositNotFound",
-    "inputs": [
-      {
-        "name": "depositId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidOriginChainId",
-    "inputs": [
-      {
-        "name": "originChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidOriginTxHash",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "InvalidCustodyAddress",
     "inputs": []
   }
 ]

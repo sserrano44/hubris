@@ -62,6 +62,7 @@ contract HubProtocolTest is TestBase {
 
     SpokePortal internal portal;
     MockBridgeAdapter internal bridgeAdapter;
+    uint256 internal nextAttestationLogIndex = 1;
 
     function setUp() external {
         user = vm.addr(USER_PK);
@@ -164,8 +165,7 @@ contract HubProtocolTest is TestBase {
         uint256 amount = 25e6;
 
         hubUSDC.mint(address(custody), amount);
-        vm.prank(bridgeOperator);
-        custody.registerBridgedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), amount);
+        _registerAttestedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), amount);
 
         DataTypes.SupplyCredit[] memory supplyCredits = new DataTypes.SupplyCredit[](1);
         supplyCredits[0] = DataTypes.SupplyCredit({
@@ -260,8 +260,7 @@ contract HubProtocolTest is TestBase {
 
         hubUSDC.mint(address(custody), supplyAmount);
 
-        vm.prank(bridgeOperator);
-        custody.registerBridgedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), supplyAmount);
+        _registerAttestedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), supplyAmount);
 
         DataTypes.SupplyCredit[] memory supplyCredits = new DataTypes.SupplyCredit[](1);
         supplyCredits[0] = DataTypes.SupplyCredit({
@@ -369,8 +368,7 @@ contract HubProtocolTest is TestBase {
         uint256 depositId = portal.initiateSupply(address(spokeUSDC), supplyAmount, user);
 
         hubUSDC.mint(address(custody), supplyAmount);
-        vm.prank(bridgeOperator);
-        custody.registerBridgedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), supplyAmount);
+        _registerAttestedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), supplyAmount);
 
         DataTypes.SupplyCredit[] memory supplyCredits = new DataTypes.SupplyCredit[](1);
         supplyCredits[0] = DataTypes.SupplyCredit(depositId, user, address(hubUSDC), supplyAmount);
@@ -530,8 +528,7 @@ contract HubProtocolTest is TestBase {
         uint256 depositId = 12_001;
         uint256 settlementAmount = 60e6;
         hubUSDC.mint(address(custody), settlementAmount);
-        vm.prank(bridgeOperator);
-        custody.registerBridgedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), settlementAmount);
+        _registerAttestedDeposit(depositId, Constants.INTENT_SUPPLY, user, address(hubUSDC), settlementAmount);
 
         DataTypes.SupplyCredit[] memory supplyCredits = new DataTypes.SupplyCredit[](1);
         supplyCredits[0] = DataTypes.SupplyCredit({
@@ -904,8 +901,7 @@ contract HubProtocolTest is TestBase {
         uint256 amount2 = 80e6;
 
         hubUSDC.mint(address(custody), amount1 + amount2);
-        vm.prank(bridgeOperator);
-        custody.registerBridgedDeposit(depositId1, Constants.INTENT_SUPPLY, user, address(hubUSDC), amount1);
+        _registerAttestedDeposit(depositId1, Constants.INTENT_SUPPLY, user, address(hubUSDC), amount1);
         // Intentionally do NOT register depositId2 to force mid-batch failure.
 
         DataTypes.SupplyCredit[] memory supplyCredits = new DataTypes.SupplyCredit[](2);
@@ -981,6 +977,33 @@ contract HubProtocolTest is TestBase {
         assertTrue(!settlement.batchExecuted(oversized.batchId), "oversized batch must never execute");
     }
 
+    function _registerAttestedDeposit(uint256 depositId, uint8 intentType, address depositUser, address hubAsset, uint256 amount)
+        internal
+    {
+        vm.prank(bridgeOperator);
+        custody.registerBridgedDeposit(
+            depositId,
+            intentType,
+            depositUser,
+            hubAsset,
+            amount,
+            480,
+            keccak256(
+                abi.encodePacked(
+                    keccak256(bytes("origin")),
+                    depositId,
+                    intentType,
+                    depositUser,
+                    hubAsset,
+                    amount,
+                    nextAttestationLogIndex
+                )
+            ),
+            nextAttestationLogIndex
+        );
+        nextAttestationLogIndex++;
+    }
+
     function _wireSystem() internal {
         DataTypes.RiskParams memory usdcRisk = DataTypes.RiskParams({
             ltvBps: 7500,
@@ -1032,7 +1055,7 @@ contract HubProtocolTest is TestBase {
 
         lockManager.setSettlement(address(settlement));
 
-        custody.grantRole(custody.BRIDGE_ROLE(), bridgeOperator);
+        custody.grantRole(custody.CANONICAL_BRIDGE_RECEIVER_ROLE(), bridgeOperator);
         custody.grantRole(custody.SETTLEMENT_ROLE(), address(settlement));
 
         settlement.grantRole(settlement.RELAYER_ROLE(), relayer);

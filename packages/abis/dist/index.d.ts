@@ -5,6 +5,7 @@ export declare const HubIntentInboxAbi: Abi;
 export declare const HubLockManagerAbi: Abi;
 export declare const HubSettlementAbi: Abi;
 export declare const HubCustodyAbi: Abi;
+export declare const CanonicalBridgeReceiverAdapterAbi: Abi;
 export declare const TokenRegistryAbi: Abi;
 export declare const KinkInterestRateModelAbi: Abi;
 export declare const MockERC20Abi: Abi;
