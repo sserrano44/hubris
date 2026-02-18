@@ -37,7 +37,7 @@ contract HubIntentInbox is Ownable, EIP712 {
         _;
     }
 
-    constructor(address owner_) Ownable(owner_) EIP712("ZkHubIntentInbox", "1") {}
+    constructor(address owner_) Ownable(owner_) EIP712("ElHubIntentInbox", "1") {}
 
     function setConsumer(address consumer, bool allowed) external onlyOwner {
         isConsumer[consumer] = allowed;

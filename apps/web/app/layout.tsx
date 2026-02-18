@@ -5,17 +5,17 @@ import { Nav } from "../components/nav";
 import { WalletControls } from "../components/wallet-controls";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://zkhub.finance"),
-  title: "zkhub",
+  metadataBase: new URL("https://elhub.finance"),
+  title: "elhub",
   description: "Multi-chain intent-based money market",
   alternates: {
     canonical: "/"
   },
   openGraph: {
-    title: "zkhub",
+    title: "elhub",
     description: "Multi-chain intent-based money market",
-    url: "https://zkhub.finance",
-    siteName: "zkhub"
+    url: "https://elhub.finance",
+    siteName: "elhub"
   }
 };
 
@@ -27,7 +27,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           <div className="site-shell">
             <header className="topbar">
               <div>
-                <p className="eyebrow">zkhub</p>
+                <p className="eyebrow">elhub</p>
                 <h1>Cross-Chain Money Market</h1>
               </div>
               <WalletControls />

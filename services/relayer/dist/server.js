@@ -5,7 +5,7 @@ import express from "express";
 import { z } from "zod";
 import { createPublicClient, createWalletClient, decodeAbiParameters, defineChain, encodeAbiParameters, http, keccak256, parseAbi, parseAbiItem } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { HubLockManagerAbi, HubSettlementAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
+import { HubLockManagerAbi, HubSettlementAbi, MockERC20Abi, SpokePortalAbi } from "@elhub/abis";
 var IntentType;
 (function (IntentType) {
     IntentType[IntentType["SUPPLY"] = 1] = "SUPPLY";
@@ -18,7 +18,7 @@ const isProduction = runtimeEnv === "production";
 const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET
     ?? (isProduction ? "" : "dev-internal-auth-secret");
-const internalCallerHeader = "x-zkhub-internal-service";
+const internalCallerHeader = "x-elhub-internal-service";
 const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "relayer";
 const app = express();
 app.set("json replacer", (_key, value) => (typeof value === "bigint" ? value.toString() : value));
@@ -633,8 +633,8 @@ async function postInternal(baseUrl, routePath, body) {
             method: "POST",
             headers: {
                 "content-type": "application/json",
-                "x-zkhub-internal-ts": timestamp,
-                "x-zkhub-internal-sig": signature,
+                "x-elhub-internal-ts": timestamp,
+                "x-elhub-internal-sig": signature,
                 [internalCallerHeader]: internalServiceName
             },
             body: rawBody,

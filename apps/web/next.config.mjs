@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@zkhub/sdk", "@zkhub/abis"]
+  transpilePackages: ["@elhub/sdk", "@elhub/abis"]
 };
 
 export default nextConfig;

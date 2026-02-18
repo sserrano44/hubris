@@ -1,4 +1,4 @@
-import type { IntentLifecycle, IntentStatus } from "@zkhub/sdk";
+import type { IntentLifecycle, IntentStatus } from "@elhub/sdk";
 export type DepositState = {
     depositId: number;
     user: `0x${string}`;

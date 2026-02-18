@@ -1,5 +1,5 @@
 {
-  "name": "@zkhub/relayer",
+  "name": "@elhub/relayer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "test": "echo 'No tests for relayer service'"
   },
   "dependencies": {
-    "@zkhub/abis": "workspace:*",
-    "@zkhub/sdk": "workspace:*",
+    "@elhub/abis": "workspace:*",
+    "@elhub/sdk": "workspace:*",
     "express": "^4.21.1",
     "viem": "^2.23.2",
     "zod": "^3.23.8"

@@ -2,7 +2,7 @@ import path from "node:path";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { z } from "zod";
-import type { IntentLifecycle } from "@zkhub/sdk";
+import type { IntentLifecycle } from "@elhub/sdk";
 import { JsonIndexerStore, SqliteIndexerStore, type IndexerStore } from "./store";
 
 type RequestWithMeta = express.Request & { rawBody?: string; requestId?: string };
@@ -14,7 +14,7 @@ const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
 const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
-const internalCallerHeader = "x-zkhub-internal-service";
+const internalCallerHeader = "x-elhub-internal-service";
 const internalRequirePrivateIp =
   (process.env.INTERNAL_API_REQUIRE_PRIVATE_IP ?? (isProduction ? "1" : "0")) !== "0";
 const internalAllowedIps = parseCsvSet(process.env.INTERNAL_API_ALLOWED_IPS ?? "");
@@ -49,7 +49,7 @@ app.use((_req, res, next) => {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "content-type,x-request-id,x-zkhub-internal-ts,x-zkhub-internal-sig,x-zkhub-internal-service"
+    "content-type,x-request-id,x-elhub-internal-ts,x-elhub-internal-sig,x-elhub-internal-service"
   );
   if (_req.method === "OPTIONS") {
     res.status(204).end();
@@ -223,8 +223,8 @@ app.listen(port, () => {
 
 function requireInternalAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const request = req as RequestWithMeta;
-  const timestamp = req.header("x-zkhub-internal-ts");
-  const signature = req.header("x-zkhub-internal-sig");
+  const timestamp = req.header("x-elhub-internal-ts");
+  const signature = req.header("x-elhub-internal-sig");
   const callerService = req.header(internalCallerHeader)?.trim();
 
   if (!timestamp || !signature || !callerService) {

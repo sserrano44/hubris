@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ZkHub is a hub-and-spoke, intent-based, cross-chain money market protocol. The **hub** (Base) handles all accounting, risk checks, and liquidity. The **spoke** (Worldchain) handles user entry/exit and escrow execution. Settlement is batched and ZK-verified using Groth16 proofs.
+ElHub is a hub-and-spoke, intent-based, cross-chain money market protocol. The **hub** (Base) handles all accounting, risk checks, and liquidity. The **spoke** (Worldchain) handles user entry/exit and escrow execution. Settlement is batched and ZK-verified using Groth16 proofs.
 
 ## Monorepo Structure
 
-- **pnpm** workspaces managed by **Turbo**. Package manager: pnpm 9.12.0 (via Corepack).
-- `contracts/` — Solidity 0.8.24 (Foundry, Cancun EVM, via-IR, optimizer 200 runs)
+**pnpm** workspaces managed by **Turbo**. Package manager: pnpm 9.12.0 (via Corepack). Requires Node.js >= 22.
+
+- `contracts/` — Solidity 0.8.24 (Foundry). **Not** a pnpm workspace — Foundry-only.
 - `circuits/` — Circom ZK circuits (Groth16 via snarkjs)
 - `services/indexer/` — Intent lifecycle & status API (port 3030)
 - `services/prover/` — Batch construction & ZK proof generation (port 3050)
@@ -25,7 +26,7 @@ ZkHub is a hub-and-spoke, intent-based, cross-chain money market protocol. The *
 pnpm install                # Install all dependencies
 pnpm dev                    # Full local dev: 2 anvil chains + deploy + all services + web
 pnpm build                  # Turbo build all workspaces
-pnpm lint                   # Lint all
+pnpm lint                   # Lint all (only web has linting via next lint)
 pnpm test                   # Test all
 pnpm format                 # Format all
 
@@ -33,6 +34,11 @@ pnpm format                 # Format all
 pnpm contracts:build        # forge build
 pnpm contracts:test         # forge test -vvv
 cd contracts && forge test --match-test testFunctionName -vvv  # Run single test
+cd contracts && forge test --match-contract ContractName -vvv  # Run single contract's tests
+
+# Services (individual)
+cd services/indexer && pnpm test    # tsx --test src/**/*.test.ts
+cd services/prover && pnpm test     # tsx --test src/**/*.test.ts
 
 # ABIs (regenerate after contract changes)
 pnpm abis:generate
@@ -62,31 +68,36 @@ bash ./circuits/prover/build-artifacts.sh   # Build circuit artifacts (requires 
 5. Prover batches finalize actions and generates proof
 6. Settlement consumes lock, updates accounting, reimburses relayer
 
+**Intent status flow:** `initiated → pending_lock → locked → filled → awaiting_settlement → settled | failed`
+
 ## Contracts Architecture
 
-Hub contracts (`contracts/src/hub/`):
-- `HubMoneyMarket` — Share-based supply/debt accounting, interest accrual (kink model)
-- `HubRiskManager` — Health factor math, LTV, liquidation thresholds, caps
-- `HubIntentInbox` — EIP-712 intent verification, nonce replay protection
-- `HubLockManager` — Mandatory lock/reservation before spoke execution
-- `HubSettlement` — Batched settlement with ZK verification, action root computation
-- `HubCustody` — Bridged funds intake and controlled release
-- `TokenRegistry` — Token mappings hub↔spoke, decimals, risk parameters
-- `KinkInterestRateModel` — Variable rates with utilization kink
+Hub contracts live in `contracts/src/hub/` — the main ones are `HubMoneyMarket` (share-based accounting, interest accrual), `HubRiskManager` (health factor, LTV, caps), `HubIntentInbox` (EIP-712 verification), `HubLockManager` (lock/reservation), `HubSettlement` (batched ZK-verified settlement), `HubCustody` (bridged funds), `TokenRegistry` (hub↔spoke token mappings).
 
-Spoke contracts (`contracts/src/spoke/`):
-- `SpokePortal` — User-facing: initiates supply/repay, executes borrow/withdraw fills
-- `CanonicalBridgeAdapter` / `MockBridgeAdapter` — Bridge abstraction
+Spoke contracts live in `contracts/src/spoke/` — `SpokePortal` is the user-facing entry point. Bridge adapters (`CanonicalBridgeAdapter`, `MockBridgeAdapter`) handle cross-chain messaging.
 
-Libraries (`contracts/src/libraries/`):
-- `Constants.sol` — WAD, RAY, BPS, MAX_BATCH_ACTIONS=50, SNARK_SCALAR_FIELD
-- `DataTypes.sol` — Intent, SettlementBatch, SupplyCredit, BorrowFinalize structs
-- `IntentHasher.sol` — EIP-712 intent hashing
-- `ProofHash.sol` — SNARK-field-safe action root computation
+Shared libraries in `contracts/src/libraries/` — `Constants.sol` (WAD, RAY, BPS, MAX_BATCH_ACTIONS=50), `DataTypes.sol` (all struct definitions), `IntentHasher.sol`, `ProofHash.sol`.
 
-ZK (`contracts/src/zk/`):
-- `Verifier.sol` — DEV_MODE dummy proof + real Groth16 verifier slot
-- `Groth16VerifierAdapter.sol` — Adapts generic proof interface to generated Groth16 verifier
+ZK contracts in `contracts/src/zk/` — `Verifier.sol` supports DEV_MODE (dummy proof) and production Groth16.
+
+## Foundry Specifics
+
+- OpenZeppelin is **vendored**: `@openzeppelin/` remaps to `src/vendor/openzeppelin/`
+- **No forge-std** — tests use a custom `TestBase.sol` (`contracts/test/utils/TestBase.sol`) with its own `Vm` cheat interface
+- FFI is enabled; `via_ir = true`; Cancun EVM; optimizer 200 runs
+- Fork tests require `RUN_FORK_TESTS=1` and `BASE_FORK_URL` env vars
+
+## Services Architecture
+
+All services use **Express.js** with **Zod** validation. TypeScript compiled with `tsc`, run with `tsx` in dev. Internal endpoints (`/internal/*`) use HMAC-SHA256 auth over `{timestamp}:{path}:{body}` with `INTERNAL_API_AUTH_SECRET`.
+
+**Testing**: Services use **Node.js built-in test runner** (`node:test` + `node:assert/strict`), run via `tsx --test`. No Jest/Vitest.
+
+**SQLite**: Services use `node:sqlite` (Node.js 22.5+ built-in `DatabaseSync`) — no external sqlite package. Persistence mode is configurable per service (`INDEXER_DB_KIND=json|sqlite`, `PROVER_STORE_KIND=json|sqlite`).
+
+**Prover** has two modes controlled by `PROVER_MODE` env:
+- `dev` (default): Returns dummy proof bytes
+- `circuit`: Runs `snarkjs groth16 fullprove` with real artifacts
 
 ## Circuit Details
 
@@ -95,29 +106,23 @@ ZK (`contracts/src/zk/`):
 - **Private witness:** actionCount, actionIds[50]
 - Iteratively hashes inputs using field-safe HashPair, constrains result to actionsRoot
 
-## Services Architecture
-
-All services use Express.js with Zod validation. Internal endpoints (`/internal/*`) use HMAC-SHA256 auth over `{timestamp}:{path}:{body}` with `INTERNAL_API_AUTH_SECRET`.
-
-**Prover** has two modes controlled by `PROVER_MODE` env:
-- `dev` (default): Returns dummy proof bytes
-- `circuit`: Runs `snarkjs groth16 fullprove` with real artifacts
-
-**Intent status flow:** `initiated → pending_lock → locked → filled → awaiting_settlement → settled | failed`
-
 ## Local Development Environment
 
 `pnpm dev` starts:
 1. Two anvil instances: Base-local (port 8545, chain 8453) and Worldchain-local (port 9545, chain 480)
-2. Contract deployment via `contracts/script/deploy-local.mjs` (writes addresses to `contracts/deployments/local.env` and `local.json`)
+2. Contract deployment via `contracts/script/deploy-local.mjs` → writes `contracts/deployments/local.env` and `local.json`
 3. ABI generation
 4. All services + web app in parallel
 
-**Verifier modes** (deployment):
+The deploy script (`contracts/script/deploy-local.mjs`) deploys all contracts, wires roles, seeds liquidity, and writes deployment artifacts. `scripts/dev.sh` sources `local.env` to inject deployed addresses into service environments.
+
+**Verifier modes:**
 - Dev: `HUB_VERIFIER_DEV_MODE=1` (default) — dummy proofs accepted
 - Production: `HUB_VERIFIER_DEV_MODE=0` + `HUB_GROTH16_VERIFIER_ADDRESS=<addr>`
 
 ## Key Environment Variables
+
+See `.env.example` for the full reference. Key variables:
 
 ```
 HUB_RPC_URL                          # Hub RPC (default: localhost:8545)
@@ -130,10 +135,8 @@ PROVER_MODE=dev|circuit               # Proof generation mode
 PROVER_CIRCUIT_ARTIFACTS_DIR          # Path to circuit build artifacts
 ```
 
-Deployed addresses are auto-set by the deploy script. RPC resolution falls back: explicit env → .env values → worldchain localhost defaults (for local dev).
+Deployed contract addresses are auto-set by the deploy script and written to `contracts/deployments/local.env`. RPC resolution falls back: explicit env → .env values → worldchain localhost defaults.
 
-## Foundry Specifics
+## TypeScript Conventions
 
-- OpenZeppelin is vendored: `@openzeppelin/` remaps to `src/vendor/openzeppelin/`
-- FFI is enabled
-- Fork tests require `RUN_FORK_TESTS=1` and `BASE_FORK_URL` env vars
+All workspaces extend `tsconfig.base.json` (ES2022, ESNext modules, Bundler resolution, strict mode, `noUncheckedIndexedAccess`). Services and packages compile with `tsc` to `dist/`. The web app uses Next.js with `noEmit`.

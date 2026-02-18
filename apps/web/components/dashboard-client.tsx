@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPublicClient, formatUnits, http } from "viem";
 import { useAccount } from "wagmi";
-import { readHubPosition } from "@zkhub/sdk";
+import { readHubPosition } from "@elhub/sdk";
 import { useDeployments } from "../lib/runtime-config";
 
 const HUB_RPC = process.env.NEXT_PUBLIC_HUB_RPC_URL ?? "http://127.0.0.1:8545";

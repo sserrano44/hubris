@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { parseUnits } from "viem";
 import { useAccount, useSignTypedData } from "wagmi";
-import { IntentType, getIntentTypedData, rawIntentId } from "@zkhub/sdk";
+import { IntentType, getIntentTypedData, rawIntentId } from "@elhub/sdk";
 import { useDeployments } from "../lib/runtime-config";
 
 const RELAYER_API = process.env.NEXT_PUBLIC_RELAYER_API_URL ?? "http://127.0.0.1:3040";

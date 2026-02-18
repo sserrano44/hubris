@@ -21,7 +21,7 @@ export class CircuitProofProvider {
         ?? path.join(this.circuitArtifactsDir, "SettlementBatchRoot_js", "SettlementBatchRoot.wasm");
     zkeyPath = process.env.PROVER_CIRCUIT_ZKEY_PATH
         ?? path.join(this.circuitArtifactsDir, "SettlementBatchRoot_final.zkey");
-    tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "zkhub-prover");
+    tmpRoot = process.env.PROVER_TMP_DIR ?? path.join(os.tmpdir(), "elhub-prover");
     keepTmp = process.env.PROVER_KEEP_TMP_FILES === "1";
     async prove(batch) {
         fs.mkdirSync(this.tmpRoot, { recursive: true });

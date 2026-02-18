@@ -20,7 +20,7 @@ export const intentTypes = {
 export function getIntentTypedData(chainId: number, intentInbox: `0x${string}`, intent: Intent) {
   return {
     domain: {
-      name: "ZkHubIntentInbox",
+      name: "ElHubIntentInbox",
       version: "1",
       chainId,
       verifyingContract: intentInbox

@@ -1,6 +1,6 @@
-zkhub
+elhub
 
-Official site: `https://zkhub.finance`
+Official site: `https://elhub.finance`
 
 Multi-chain intent-based DeFi money market with hub-side accounting on Base and spoke execution on other L2s.
 

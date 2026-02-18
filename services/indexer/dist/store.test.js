@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { IntentType } from "@zkhub/sdk";
+import { IntentType } from "@elhub/sdk";
 import { JsonIndexerStore, SqliteIndexerStore } from "./store";
 function makeIntent(partial) {
     return {
@@ -29,7 +29,7 @@ function makeDeposit(partial) {
     };
 }
 function createTmpPath(name) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `zkhub-${name}-`));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `elhub-${name}-`));
     return path.join(dir, name);
 }
 function runSharedStoreContract(name, createStore) {

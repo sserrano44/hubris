@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { JsonProverQueueStore, SqliteProverQueueStore } from "./queue-store";
 function createTmpDir(prefix) {
-    return fs.mkdtempSync(path.join(os.tmpdir(), `zkhub-${prefix}-`));
+    return fs.mkdtempSync(path.join(os.tmpdir(), `elhub-${prefix}-`));
 }
 function makeSupplyAction(partial) {
     return {

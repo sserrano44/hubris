@@ -68,11 +68,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting Base-local anvil on :${HUB_RPC_PORT}"
-anvil --port "$HUB_RPC_PORT" --chain-id "$HUB_CHAIN_ID" --block-time 1 >/tmp/zkhub-anvil-base.log 2>&1 &
+anvil --port "$HUB_RPC_PORT" --chain-id "$HUB_CHAIN_ID" --block-time 1 >/tmp/elhub-anvil-base.log 2>&1 &
 PIDS+=("$!")
 
 echo "Starting ${SPOKE_LABEL}-local anvil on :${SPOKE_RPC_PORT}"
-anvil --port "$SPOKE_RPC_PORT" --chain-id "$SPOKE_CHAIN_ID" --block-time 1 >/tmp/zkhub-anvil-${SPOKE_NETWORK}.log 2>&1 &
+anvil --port "$SPOKE_RPC_PORT" --chain-id "$SPOKE_CHAIN_ID" --block-time 1 >/tmp/elhub-anvil-${SPOKE_NETWORK}.log 2>&1 &
 PIDS+=("$!")
 
 rpc_ready() {
@@ -108,19 +108,19 @@ source ./contracts/deployments/local.env
 set +a
 
 echo "Generating shared ABIs"
-pnpm --filter @zkhub/abis run generate
+pnpm --filter @elhub/abis run generate
 
 echo "Starting indexer, prover, relayer, and web"
-pnpm --filter @zkhub/indexer dev &
+pnpm --filter @elhub/indexer dev &
 PIDS+=("$!")
 
-pnpm --filter @zkhub/prover dev &
+pnpm --filter @elhub/prover dev &
 PIDS+=("$!")
 
-pnpm --filter @zkhub/relayer dev &
+pnpm --filter @elhub/relayer dev &
 PIDS+=("$!")
 
-pnpm --filter @zkhub/web dev &
+pnpm --filter @elhub/web dev &
 PIDS+=("$!")
 
 wait -n

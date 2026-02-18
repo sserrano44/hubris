@@ -1,5 +1,5 @@
 {
-  "name": "@zkhub/sdk",
+  "name": "@elhub/sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,10 +8,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "pnpm run build --watch",
-    "test": "echo 'No tests for @zkhub/sdk'"
+    "test": "echo 'No tests for @elhub/sdk'"
   },
   "dependencies": {
-    "@zkhub/abis": "workspace:*",
+    "@elhub/abis": "workspace:*",
     "viem": "^2.23.2"
   },
   "devDependencies": {

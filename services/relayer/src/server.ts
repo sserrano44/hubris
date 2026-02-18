@@ -17,7 +17,7 @@ import {
   type Hex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { HubLockManagerAbi, HubSettlementAbi, MockERC20Abi, SpokePortalAbi } from "@zkhub/abis";
+import { HubLockManagerAbi, HubSettlementAbi, MockERC20Abi, SpokePortalAbi } from "@elhub/abis";
 
 type RequestWithMeta = express.Request & { requestId?: string };
 type Intent = {
@@ -47,7 +47,7 @@ const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret =
   process.env.INTERNAL_API_AUTH_SECRET
   ?? (isProduction ? "" : "dev-internal-auth-secret");
-const internalCallerHeader = "x-zkhub-internal-service";
+const internalCallerHeader = "x-elhub-internal-service";
 const internalServiceName = process.env.INTERNAL_API_SERVICE_NAME?.trim() || "relayer";
 
 const app = express();
@@ -798,8 +798,8 @@ async function postInternal(baseUrl: string, routePath: string, body: Record<str
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-zkhub-internal-ts": timestamp,
-        "x-zkhub-internal-sig": signature,
+        "x-elhub-internal-ts": timestamp,
+        "x-elhub-internal-sig": signature,
         [internalCallerHeader]: internalServiceName
       },
       body: rawBody,

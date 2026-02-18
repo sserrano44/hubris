@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { IntentType, type IntentLifecycle } from "@zkhub/sdk";
+import { IntentType, type IntentLifecycle } from "@elhub/sdk";
 import {
   JsonIndexerStore,
   SqliteIndexerStore,
@@ -37,7 +37,7 @@ function makeDeposit(partial?: Partial<DepositInput>): DepositInput {
 }
 
 function createTmpPath(name: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `zkhub-${name}-`));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `elhub-${name}-`));
   return path.join(dir, name);
 }
 

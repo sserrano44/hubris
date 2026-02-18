@@ -9,7 +9,7 @@ const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? "*";
 const internalAuthSecret = process.env.INTERNAL_API_AUTH_SECRET
     ?? (isProduction ? "" : "dev-internal-auth-secret");
 const internalAuthPreviousSecret = process.env.INTERNAL_API_AUTH_PREVIOUS_SECRET?.trim() ?? "";
-const internalCallerHeader = "x-zkhub-internal-service";
+const internalCallerHeader = "x-elhub-internal-service";
 const internalRequirePrivateIp = (process.env.INTERNAL_API_REQUIRE_PRIVATE_IP ?? (isProduction ? "1" : "0")) !== "0";
 const internalAllowedIps = parseCsvSet(process.env.INTERNAL_API_ALLOWED_IPS ?? "");
 const internalAllowedServices = parseCsvSet(process.env.INTERNAL_API_ALLOWED_SERVICES ?? "relayer,prover,e2e");
@@ -33,7 +33,7 @@ app.use((req, res, next) => {
 app.use((_req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", corsAllowOrigin);
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id,x-zkhub-internal-ts,x-zkhub-internal-sig,x-zkhub-internal-service");
+    res.setHeader("Access-Control-Allow-Headers", "content-type,x-request-id,x-elhub-internal-ts,x-elhub-internal-sig,x-elhub-internal-service");
     if (_req.method === "OPTIONS") {
         res.status(204).end();
         return;
@@ -184,8 +184,8 @@ app.listen(port, () => {
 });
 function requireInternalAuth(req, res, next) {
     const request = req;
-    const timestamp = req.header("x-zkhub-internal-ts");
-    const signature = req.header("x-zkhub-internal-sig");
+    const timestamp = req.header("x-elhub-internal-ts");
+    const signature = req.header("x-elhub-internal-sig");
     const callerService = req.header(internalCallerHeader)?.trim();
     if (!timestamp || !signature || !callerService) {
         auditLog(request, "internal_auth_rejected", { reason: "missing_headers" });

@@ -1,5 +1,5 @@
 {
-  "name": "zkhub",
+  "name": "elhub",
   "private": true,
   "packageManager": "pnpm@9.12.0",
   "scripts": {
@@ -16,7 +16,7 @@
     "contracts:test": "cd contracts && forge test -vvv",
     "contracts:build": "cd contracts && forge build",
     "contracts:deploy:local": "bash ./contracts/script/deploy-local.sh",
-    "abis:generate": "pnpm --filter @zkhub/abis run generate",
+    "abis:generate": "pnpm --filter @elhub/abis run generate",
     "deployer:address": "node --env-file=.env -e \"const{privateKeyToAccount}=require('viem/accounts');console.log(privateKeyToAccount(process.env.DEPLOYER_PRIVATE_KEY).address)\""
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 {
-  "name": "@zkhub/abis",
+  "name": "@elhub/abis",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "generate": "node ./scripts/generate.mjs",
     "dev": "pnpm run generate && pnpm run build",
-    "test": "echo 'No tests for @zkhub/abis'"
+    "test": "echo 'No tests for @elhub/abis'"
   },
   "devDependencies": {
     "@types/node": "^22.8.0"

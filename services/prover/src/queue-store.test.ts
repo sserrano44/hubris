@@ -11,7 +11,7 @@ import {
 } from "./queue-store";
 
 function createTmpDir(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), `zkhub-${prefix}-`));
+  return fs.mkdtempSync(path.join(os.tmpdir(), `elhub-${prefix}-`));
 }
 
 function makeSupplyAction(partial?: Partial<QueuedAction>): QueuedAction {
