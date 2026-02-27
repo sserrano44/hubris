@@ -126,7 +126,7 @@ contract HubRiskManager is Ownable, Initializable, UUPSUpgradeable, IHubRiskMana
 
     function canLockWithdraw(address user, address asset, uint256 amount) external view returns (bool) {
         if (!_isAssetRegistered(asset)) return false;
-        if (!_withinSupplyCap(asset, 0)) return false;
+        // Supply caps apply to net new supply only; withdrawals must remain possible when healthy.
         uint256 hf = _healthFactorAfter(user, address(0), 0, asset, amount, true);
         return hf >= Constants.WAD;
     }
@@ -145,7 +145,6 @@ contract HubRiskManager is Ownable, Initializable, UUPSUpgradeable, IHubRiskMana
 
     function canUserWithdraw(address user, address asset, uint256 amount) external view returns (bool) {
         if (!_isAssetRegistered(asset)) return false;
-        if (!_withinSupplyCap(asset, 0)) return false;
         uint256 hf = _healthFactorAfter(user, address(0), 0, asset, amount, true);
         return hf >= Constants.WAD;
     }

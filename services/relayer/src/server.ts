@@ -19,6 +19,12 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { HubLockManagerAbi } from "@elhub/abis";
+import {
+  collectNormalizedSpokeDepositLogs,
+  spokeFundsDepositedEvent,
+  spokeV3FundsDepositedEvent,
+  type NormalizedSpokeDepositLog
+} from "./spoke-deposit-log";
 
 type RequestWithMeta = express.Request & { requestId?: string };
 type Intent = {
@@ -195,9 +201,6 @@ const tokenRegistryReadAbi = parseAbi([
   "function getConfigByHub(address hubToken) view returns ((address hubToken,address spokeToken,uint8 decimals,(uint256 ltvBps,uint256 liquidationThresholdBps,uint256 liquidationBonusBps,uint256 supplyCap,uint256 borrowCap) risk,bytes32 bridgeAdapterId,bool enabled))",
   "function getSpokeDecimalsByHub(uint256 destinationChainId,address hubToken) view returns (uint8)"
 ]);
-const spokeV3FundsDepositedEvent = parseAbiItem(
-  "event FundsDeposited(bytes32 inputToken, bytes32 outputToken, uint256 inputAmount, uint256 outputAmount, uint256 indexed destinationChainId, uint256 indexed depositId, uint32 quoteTimestamp, uint32 fillDeadline, uint32 exclusivityDeadline, bytes32 indexed depositor, bytes32 recipient, bytes32 exclusiveRelayer, bytes message)"
-);
 const spokeBorrowFillRecordedEvent = parseAbiItem(
   "event BorrowFillRecorded(bytes32 indexed intentId,uint8 indexed intentType,address indexed user,address recipient,address spokeToken,address hubAsset,uint256 amount,uint256 fee,address relayer,uint256 destinationChainId,address hubFinalizer,bytes32 messageHash)"
 );
@@ -500,11 +503,23 @@ async function pollSpokeDeposits() {
     finalizedToBlock: finalizedToBlock.toString()
   });
 
-  const acrossDepositLogs = await spokePublic.getLogs({
+  const canonicalAcrossDepositLogs = await spokePublic.getLogs({
+    address: spokeAcrossSpokePoolAddress,
+    event: spokeFundsDepositedEvent,
+    fromBlock,
+    toBlock: rangeToBlock
+  });
+
+  const mockAcrossDepositLogs = await spokePublic.getLogs({
     address: spokeAcrossSpokePoolAddress,
     event: spokeV3FundsDepositedEvent,
     fromBlock,
     toBlock: rangeToBlock
+  });
+
+  const acrossDepositLogs = collectNormalizedSpokeDepositLogs({
+    canonicalLogs: canonicalAcrossDepositLogs,
+    mockLogs: mockAcrossDepositLogs
   });
 
   for (const log of acrossDepositLogs) {
@@ -526,25 +541,17 @@ async function pollSpokeDeposits() {
   saveTracking(trackingPath, tracking);
 }
 
-async function handleAcrossDepositLog(log: {
-  args: Record<string, unknown>;
-  transactionHash?: Hex;
-  logIndex?: bigint | number | undefined;
-  blockNumber?: bigint | undefined;
-}, finalizedToBlock: bigint) {
-  const message = log.args.message as Hex | undefined;
-  const outputToken = bytes32ToAddress(log.args.outputToken);
-  const recipient = bytes32ToAddress(log.args.recipient);
-  const outputAmount = asBigInt(log.args.outputAmount);
-  const destinationChainId = asBigInt(log.args.destinationChainId);
-  const originTxHash = log.transactionHash;
-  const spokeObservedBlock = log.blockNumber ?? 0n;
-  const originLogIndex = typeof log.logIndex === "bigint" ? log.logIndex : BigInt(log.logIndex ?? 0);
-
-  if (!message || !outputToken || !recipient || outputAmount === undefined || destinationChainId === undefined || !originTxHash) {
-    console.warn("Skipping Across deposit log with missing fields");
-    return;
-  }
+async function handleAcrossDepositLog(log: NormalizedSpokeDepositLog, finalizedToBlock: bigint) {
+  const {
+    message,
+    outputToken,
+    recipient,
+    outputAmount,
+    destinationChainId,
+    originTxHash,
+    spokeObservedBlock,
+    originLogIndex
+  } = log;
 
   if (recipient.toLowerCase() !== acrossReceiverAddress.toLowerCase()) {
     return;

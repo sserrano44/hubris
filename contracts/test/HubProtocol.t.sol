@@ -697,6 +697,95 @@ contract HubProtocolTest is TestBase {
         assertEq(market.getUserSupply(user, address(hubUSDC)), 100e6, "supply must remain capped");
     }
 
+    function test_withdrawChecksAllowHealthyWithdrawAboveSupplyCap() external {
+        risk.setRiskParamsFlat(address(hubUSDC), 7500, 8000, 10500, 100e6, 10_000_000e6);
+
+        vm.startPrank(user);
+        hubUSDC.approve(address(market), type(uint256).max);
+        market.supply(address(hubUSDC), 100e6, user);
+        vm.stopPrank();
+
+        hubWETH.mint(liquidator, 1 ether);
+        vm.startPrank(liquidator);
+        hubWETH.approve(address(market), type(uint256).max);
+        market.supply(address(hubWETH), 1 ether, liquidator);
+        market.borrow(address(hubUSDC), 50e6, liquidator);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 30 days);
+        market.accrueInterest(address(hubUSDC));
+
+        assertGt(market.totalSupplyAssets(address(hubUSDC)), 100e6, "interest should push supply above cap");
+        assertTrue(!risk.canUserSupply(address(hubUSDC), 1), "new supply should remain blocked above cap");
+        assertTrue(risk.canUserWithdraw(user, address(hubUSDC), 1e6), "healthy user withdraw should be allowed");
+        assertTrue(risk.canLockWithdraw(user, address(hubUSDC), 1e6), "withdraw lock should be allowed");
+
+        uint256 supplyBefore = market.getUserSupply(user, address(hubUSDC));
+        vm.prank(user);
+        market.withdraw(address(hubUSDC), 1e6, user);
+        assertTrue(market.getUserSupply(user, address(hubUSDC)) < supplyBefore, "withdraw should reduce user supply");
+    }
+
+    function test_settlementFinalizeWithdrawAllowedWhenSupplyAboveCapFromInterest() external {
+        risk.setRiskParamsFlat(address(hubUSDC), 7500, 8000, 10500, 100e6, 10_000_000e6);
+
+        vm.startPrank(user);
+        hubUSDC.approve(address(market), type(uint256).max);
+        market.supply(address(hubUSDC), 100e6, user);
+        vm.stopPrank();
+
+        hubWETH.mint(liquidator, 1 ether);
+        vm.startPrank(liquidator);
+        hubWETH.approve(address(market), type(uint256).max);
+        market.supply(address(hubWETH), 1 ether, liquidator);
+        market.borrow(address(hubUSDC), 50e6, liquidator);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 30 days);
+        market.accrueInterest(address(hubUSDC));
+
+        assertGt(market.totalSupplyAssets(address(hubUSDC)), 100e6, "interest should push supply above cap");
+        assertTrue(!risk.canUserSupply(address(hubUSDC), 1), "new supply should remain blocked above cap");
+
+        uint256 withdrawAmount = 10e6;
+        DataTypes.Intent memory withdrawIntent = _makeIntent(Constants.INTENT_WITHDRAW, withdrawAmount, 12_050);
+        bytes memory withdrawSig = _signIntent(withdrawIntent);
+
+        vm.prank(relayer);
+        bytes32 intentId = lockManager.lock(withdrawIntent, withdrawSig);
+
+        vm.prank(relayer);
+        settlement.recordVerifiedFillEvidence(
+            intentId, Constants.INTENT_WITHDRAW, user, address(hubUSDC), withdrawAmount, 0, relayer
+        );
+
+        DataTypes.WithdrawFinalize[] memory actions = new DataTypes.WithdrawFinalize[](1);
+        actions[0] = DataTypes.WithdrawFinalize(intentId, user, address(hubUSDC), withdrawAmount, 0, relayer);
+
+        DataTypes.SettlementBatch memory batch = DataTypes.SettlementBatch({
+            batchId: 12_051,
+            hubChainId: block.chainid,
+            spokeChainId: 480,
+            actionsRoot: bytes32(0),
+            supplyCredits: new DataTypes.SupplyCredit[](0),
+            repayCredits: new DataTypes.RepayCredit[](0),
+            borrowFinalizations: new DataTypes.BorrowFinalize[](0),
+            withdrawFinalizations: actions
+        });
+        batch.actionsRoot = settlement.computeActionsRoot(batch);
+
+        uint256 supplyBefore = market.getUserSupply(user, address(hubUSDC));
+        uint256 relayerBalanceBefore = hubUSDC.balanceOf(relayer);
+
+        settlement.settleBatch(batch, DEV_PROOF);
+
+        assertTrue(settlement.isIntentSettled(intentId), "withdraw intent should settle above cap when healthy");
+        assertTrue(
+            market.getUserSupply(user, address(hubUSDC)) < supplyBefore, "settlement withdraw should reduce supply"
+        );
+        assertEq(hubUSDC.balanceOf(relayer) - relayerBalanceBefore, withdrawAmount, "relayer should be reimbursed");
+    }
+
     function test_settlementRepayRefundsSurplusToUser() external {
         uint256 borrowAmount = 50e6;
         uint256 repayCreditAmount = 80e6;
