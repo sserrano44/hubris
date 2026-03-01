@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import express from "express";
@@ -7,6 +6,7 @@ import { createPublicClient, createWalletClient, decodeAbiParameters, decodeEven
 import { privateKeyToAccount } from "viem/accounts";
 import { HubLockManagerAbi } from "@elhub/abis";
 import { collectNormalizedSpokeDepositLogs, spokeFundsDepositedEvent, spokeV3FundsDepositedEvent } from "./spoke-deposit-log";
+import { loadRelayerState, saveRelayerState } from "./finalization-state";
 var IntentType;
 (function (IntentType) {
     IntentType[IntentType["SUPPLY"] = 1] = "SUPPLY";
@@ -82,6 +82,10 @@ const rateBuckets = new Map();
 const acrossApiBaseUrl = process.env.ACROSS_API_URL ?? "https://app.across.to/api";
 const acrossAllowUnmatchedDecimals = (process.env.ACROSS_ALLOW_UNMATCHED_DECIMALS ?? "1") !== "0";
 const acrossQuoteMaxAttempts = Number(process.env.ACROSS_QUOTE_MAX_ATTEMPTS ?? "3");
+const finalizationWorkerIntervalMs = Number(process.env.RELAYER_FINALIZATION_WORKER_INTERVAL_MS ?? "3000");
+const finalizationRetryBaseDelayMs = Number(process.env.RELAYER_FINALIZATION_RETRY_BASE_MS ?? "2000");
+const finalizationRetryMaxDelayMs = Number(process.env.RELAYER_FINALIZATION_RETRY_MAX_MS ?? "300000");
+const finalizationMaxAttempts = Number(process.env.RELAYER_FINALIZATION_MAX_ATTEMPTS ?? "20");
 const spokeToHub = JSON.parse(process.env.SPOKE_TO_HUB_TOKEN_MAP ?? "{}");
 if (!lockManagerAddress
     || !custodyAddress
@@ -133,9 +137,12 @@ const tokenRegistryReadAbi = parseAbi([
 const spokeBorrowFillRecordedEvent = parseAbiItem("event BorrowFillRecorded(bytes32 indexed intentId,uint8 indexed intentType,address indexed user,address recipient,address spokeToken,address hubAsset,uint256 amount,uint256 fee,address relayer,uint256 sourceChainId,uint256 destinationChainId,address hubDispatcher,address hubFinalizer,bytes32 messageHash)");
 const hubPendingDepositRecordedEvent = parseAbiItem("event PendingDepositRecorded(bytes32 indexed pendingId,uint256 indexed sourceChainId,uint256 indexed depositId,uint8 intentType,address user,address spokeToken,address hubAsset,uint256 amount,address tokenReceived,uint256 amountReceived,address relayer,bytes32 messageHash)");
 const hubBridgedDepositRegisteredEvent = parseAbiItem("event BridgedDepositRegistered(uint256 indexed depositId, uint8 indexed intentType, address indexed user, address hubAsset, uint256 amount, uint256 originChainId, bytes32 originTxHash, uint256 originLogIndex, bytes32 attestationKey)");
-const trackingPath = process.env.RELAYER_TRACKING_PATH ?? path.join(process.cwd(), "data", "relayer-tracking.json");
-const tracking = loadTracking(trackingPath);
+const hubPendingDepositExpiredEvent = parseAbiItem("event PendingDepositExpired(bytes32 indexed pendingId,uint256 indexed sourceChainId,uint256 indexed depositId,uint256 finalizeDeadline,address caller)");
+const hubPendingDepositSweptEvent = parseAbiItem("event PendingDepositSwept(bytes32 indexed pendingId,uint256 indexed sourceChainId,uint256 indexed depositId,address token,uint256 amount,address recoveryVault,address caller)");
+const statePath = process.env.RELAYER_TRACKING_PATH ?? path.join(process.cwd(), "data", "relayer-tracking.json");
+const relayerState = loadRelayerState(statePath);
 let isPollingCanonicalBridge = false;
+let isProcessingFinalizationQueue = false;
 let cachedTokenRegistryAddress;
 const hubDecimalsCache = new Map();
 const spokeDecimalsCache = new Map();
@@ -173,8 +180,13 @@ app.get("/health", (_req, res) => {
         spokeFinalityBlocks: relayerSpokeFinalityBlocks.toString(),
         hubFinalityBlocks: relayerHubFinalityBlocks.toString(),
         tracking: {
-            lastSpokeBlock: tracking.lastSpokeBlock.toString(),
-            lastHubBlock: tracking.lastHubBlock.toString()
+            lastSpokeBlock: relayerState.lastSpokeBlock.toString(),
+            lastHubBlock: relayerState.lastHubBlock.toString()
+        },
+        queue: {
+            total: Object.keys(relayerState.tasks).length,
+            pending: Object.values(relayerState.tasks).filter((task) => !task.terminal).length,
+            terminal: Object.values(relayerState.tasks).filter((task) => task.terminal).length
         }
     });
 });
@@ -336,6 +348,11 @@ app.listen(port, () => {
             console.error("Relayer poll error", error);
         });
     }, 5_000);
+    setInterval(() => {
+        processFinalizationQueue().catch((error) => {
+            console.error("Relayer finalization queue error", error);
+        });
+    }, finalizationWorkerIntervalMs);
 });
 async function pollAcrossBridge() {
     if (isPollingCanonicalBridge)
@@ -371,19 +388,19 @@ function rawIntentId(intent) {
 }
 async function pollSpokeDeposits() {
     const latestBlock = await spokePublic.getBlockNumber();
-    if (latestBlock < tracking.lastSpokeBlock) {
+    if (latestBlock < relayerState.lastSpokeBlock) {
         // Local anvil restarts can rewind chain height; restart scanning from genesis.
-        tracking.lastSpokeBlock = 0n;
+        relayerState.lastSpokeBlock = 0n;
     }
     const finalizedToBlock = latestBlock > relayerSpokeFinalityBlocks
         ? latestBlock - relayerSpokeFinalityBlocks
         : 0n;
     if (finalizedToBlock === 0n)
         return;
-    if (tracking.lastSpokeBlock === 0n && finalizedToBlock > relayerInitialBackfillBlocks) {
-        tracking.lastSpokeBlock = finalizedToBlock - relayerInitialBackfillBlocks;
+    if (relayerState.lastSpokeBlock === 0n && finalizedToBlock > relayerInitialBackfillBlocks) {
+        relayerState.lastSpokeBlock = finalizedToBlock - relayerInitialBackfillBlocks;
     }
-    const fromBlock = tracking.lastSpokeBlock + 1n;
+    const fromBlock = relayerState.lastSpokeBlock + 1n;
     if (finalizedToBlock < fromBlock)
         return;
     const rangeToBlock = fromBlock + relayerMaxLogRange - 1n < finalizedToBlock
@@ -423,8 +440,8 @@ async function pollSpokeDeposits() {
     for (const log of borrowFillLogs) {
         await handleSpokeBorrowFillLog(log, finalizedToBlock);
     }
-    tracking.lastSpokeBlock = rangeToBlock;
-    saveTracking(trackingPath, tracking);
+    relayerState.lastSpokeBlock = rangeToBlock;
+    saveRelayerRuntimeState();
 }
 async function handleAcrossDepositLog(log, finalizedToBlock) {
     const { message, outputToken, recipient, outputAmount, destinationChainId, originTxHash, spokeObservedBlock, originLogIndex } = log;
@@ -521,7 +538,17 @@ async function handleAcrossDepositLog(log, finalizedToBlock) {
         sourceReceiptsRoot,
         sourceSpokePool: spokeAcrossSpokePoolAddress
     };
-    await attemptFinalizePendingDeposit(pendingId, witness, sourceEvidence, depositId, user, intentType, hubAsset, amount);
+    enqueueDepositFinalizationTask({
+        pendingId,
+        witness,
+        sourceEvidence,
+        sourceChainId,
+        depositId,
+        intentType: intentType,
+        user,
+        hubAsset,
+        amount
+    });
 }
 async function handleSpokeBorrowFillLog(log, finalizedToBlock) {
     const intentId = log.args.intentId;
@@ -641,47 +668,36 @@ async function handleSpokeBorrowFillLog(log, finalizedToBlock) {
         sourceReceiptsRoot,
         sourceReceiver: spokeBorrowReceiverAddress
     };
-    const finalizeTx = await attemptFinalizeBorrowFill(witness, sourceEvidence, intentId).catch((error) => {
-        console.warn(`Outbound fill finalization failed for intent ${intentId}: ${error.message}`);
-        return undefined;
-    });
-    if (!finalizeTx)
-        return;
-    await updateIntentStatus(intentId, "filled", {
-        spokeBorrowFillTx: sourceTxHash,
-        spokeBorrowFillLogIndex: sourceLogIndex.toString(),
-        spokeObservedBlock: spokeObservedBlock.toString(),
-        spokeFinalizedToBlock: finalizedToBlock.toString(),
-        borrowFillFinalizeTx: finalizeTx
-    });
-    await enqueueProverAction({
-        kind: outboundKind,
+    enqueueBorrowFillFinalizationTask({
         intentId,
+        outboundKind,
+        witness,
+        sourceEvidence,
         user,
         hubAsset,
-        amount: hubFill.amount.toString(),
-        fee: hubFill.fee.toString(),
-        relayer
-    });
-    await updateIntentStatus(intentId, "awaiting_settlement", {
-        spokeBorrowFillTx: sourceTxHash,
-        borrowFillFinalizeTx: finalizeTx
+        hubAmount: hubFill.amount,
+        hubFee: hubFill.fee,
+        relayer,
+        sourceTxHash,
+        sourceLogIndex,
+        spokeObservedBlock,
+        spokeFinalizedToBlock: finalizedToBlock
     });
 }
 async function pollHubDeposits() {
     const latestBlock = await hubPublic.getBlockNumber();
-    if (latestBlock < tracking.lastHubBlock) {
-        tracking.lastHubBlock = 0n;
+    if (latestBlock < relayerState.lastHubBlock) {
+        relayerState.lastHubBlock = 0n;
     }
     const finalizedToBlock = latestBlock > relayerHubFinalityBlocks
         ? latestBlock - relayerHubFinalityBlocks
         : 0n;
     if (finalizedToBlock === 0n)
         return;
-    if (tracking.lastHubBlock === 0n && finalizedToBlock > relayerInitialBackfillBlocks) {
-        tracking.lastHubBlock = finalizedToBlock - relayerInitialBackfillBlocks;
+    if (relayerState.lastHubBlock === 0n && finalizedToBlock > relayerInitialBackfillBlocks) {
+        relayerState.lastHubBlock = finalizedToBlock - relayerInitialBackfillBlocks;
     }
-    const fromBlock = tracking.lastHubBlock + 1n;
+    const fromBlock = relayerState.lastHubBlock + 1n;
     if (finalizedToBlock < fromBlock)
         return;
     const rangeToBlock = fromBlock + relayerMaxLogRange - 1n < finalizedToBlock
@@ -711,8 +727,243 @@ async function pollHubDeposits() {
     for (const log of bridgedLogs) {
         await handleHubBridgedDepositLog(log, finalizedToBlock);
     }
-    tracking.lastHubBlock = rangeToBlock;
-    saveTracking(trackingPath, tracking);
+    const expiredLogs = await hubPublic.getLogs({
+        address: acrossReceiverAddress,
+        event: hubPendingDepositExpiredEvent,
+        fromBlock,
+        toBlock: rangeToBlock
+    });
+    for (const log of expiredLogs) {
+        await handleHubPendingDepositExpiredLog(log);
+    }
+    const sweptLogs = await hubPublic.getLogs({
+        address: acrossReceiverAddress,
+        event: hubPendingDepositSweptEvent,
+        fromBlock,
+        toBlock: rangeToBlock
+    });
+    for (const log of sweptLogs) {
+        await handleHubPendingDepositSweptLog(log);
+    }
+    relayerState.lastHubBlock = rangeToBlock;
+    saveRelayerRuntimeState();
+}
+function depositFinalizationTaskId(pendingId) {
+    return `deposit:${pendingId.toLowerCase()}`;
+}
+function borrowFillFinalizationTaskId(witness) {
+    return [
+        "borrow",
+        witness.intentId.toLowerCase(),
+        witness.sourceTxHash.toLowerCase(),
+        witness.sourceLogIndex.toString(),
+        witness.messageHash.toLowerCase()
+    ].join(":");
+}
+function enqueueDepositFinalizationTask(input) {
+    const id = depositFinalizationTaskId(input.pendingId);
+    const now = Date.now();
+    const existing = relayerState.tasks[id];
+    if (existing?.terminal)
+        return;
+    const payload = {
+        pendingId: input.pendingId,
+        witness: toDepositWitnessWire(input.witness),
+        sourceEvidence: toSourceDepositEvidenceWire(input.sourceEvidence),
+        sourceChainId: input.sourceChainId.toString(),
+        depositId: input.depositId.toString(),
+        intentType: input.intentType,
+        user: input.user,
+        hubAsset: input.hubAsset,
+        amount: input.amount.toString()
+    };
+    relayerState.tasks[id] = {
+        id,
+        kind: "deposit_finalization",
+        payload,
+        attempts: existing?.attempts ?? 0,
+        nextAttemptAt: existing ? Math.min(existing.nextAttemptAt, now) : now,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+    };
+}
+function enqueueBorrowFillFinalizationTask(input) {
+    const id = borrowFillFinalizationTaskId(input.witness);
+    const now = Date.now();
+    const existing = relayerState.tasks[id];
+    if (existing?.terminal)
+        return;
+    const payload = {
+        intentId: input.intentId,
+        outboundKind: input.outboundKind,
+        witness: toBorrowFillWitnessWire(input.witness),
+        sourceEvidence: toSourceBorrowFillEvidenceWire(input.sourceEvidence),
+        user: input.user,
+        hubAsset: input.hubAsset,
+        hubAmount: input.hubAmount.toString(),
+        hubFee: input.hubFee.toString(),
+        relayer: input.relayer,
+        sourceTxHash: input.sourceTxHash,
+        sourceLogIndex: input.sourceLogIndex.toString(),
+        spokeObservedBlock: input.spokeObservedBlock.toString(),
+        spokeFinalizedToBlock: input.spokeFinalizedToBlock.toString()
+    };
+    relayerState.tasks[id] = {
+        id,
+        kind: "borrow_fill_finalization",
+        payload,
+        attempts: existing?.attempts ?? 0,
+        nextAttemptAt: existing ? Math.min(existing.nextAttemptAt, now) : now,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+    };
+}
+async function processFinalizationQueue() {
+    if (isProcessingFinalizationQueue)
+        return;
+    isProcessingFinalizationQueue = true;
+    try {
+        const now = Date.now();
+        const due = Object.values(relayerState.tasks)
+            .filter((task) => !task.terminal && task.nextAttemptAt <= now)
+            .sort((a, b) => (a.nextAttemptAt - b.nextAttemptAt
+            || a.createdAt - b.createdAt));
+        for (const task of due) {
+            await processFinalizationTask(task);
+        }
+    }
+    finally {
+        isProcessingFinalizationQueue = false;
+    }
+}
+async function processFinalizationTask(task) {
+    const now = Date.now();
+    task.attempts += 1;
+    task.updatedAt = now;
+    try {
+        if (task.kind === "deposit_finalization") {
+            await runDepositFinalizationTask(task);
+        }
+        else if (task.kind === "borrow_fill_finalization") {
+            await runBorrowFillFinalizationTask(task);
+        }
+        else {
+            task.terminal = true;
+            task.terminalReason = "unknown_task_kind";
+            task.lastError = `unsupported task kind ${task.kind ?? "unknown"}`;
+        }
+    }
+    catch (error) {
+        const message = error.message;
+        const terminalFailure = task.kind === "deposit_finalization"
+            ? isTerminalDepositFinalizationError(message)
+            : isTerminalBorrowFinalizationError(message);
+        if (terminalFailure || task.attempts >= finalizationMaxAttempts) {
+            task.terminal = true;
+            task.terminalReason = terminalFailure ? "terminal_contract_failure" : "max_attempts_exhausted";
+            task.lastError = message;
+            task.updatedAt = Date.now();
+            if (task.kind === "deposit_finalization") {
+                const payload = task.payload;
+                await upsertDepositFinalizationStatus(payload, "finalization_failed", {
+                    terminalReason: task.terminalReason,
+                    retryCount: task.attempts,
+                    lastError: message
+                }).catch((statusError) => {
+                    console.warn(`Failed to persist terminal deposit status ${payload.depositId}`, statusError);
+                });
+            }
+            else {
+                const payload = task.payload;
+                const cancelTx = await cancelLockBestEffort(payload.intentId);
+                await updateIntentStatus(payload.intentId, "failed", {
+                    error: message,
+                    lockCancelTx: cancelTx,
+                    retryCount: task.attempts,
+                    terminalReason: task.terminalReason
+                }).catch((statusError) => {
+                    console.warn(`Failed to persist borrow terminal failure ${payload.intentId}`, statusError);
+                });
+            }
+        }
+        else {
+            task.lastError = message;
+            task.nextAttemptAt = now + computeRetryDelayMs(task.attempts);
+            task.updatedAt = Date.now();
+            if (task.kind === "deposit_finalization") {
+                const payload = task.payload;
+                await upsertDepositFinalizationStatus(payload, "finalization_retry", {
+                    retryCount: task.attempts,
+                    nextRetryAt: new Date(task.nextAttemptAt).toISOString(),
+                    lastError: message
+                }).catch((statusError) => {
+                    console.warn(`Failed to persist retry deposit status ${payload.depositId}`, statusError);
+                });
+            }
+        }
+    }
+    finally {
+        saveRelayerRuntimeState();
+    }
+}
+async function runDepositFinalizationTask(task) {
+    const payload = task.payload;
+    const witness = fromDepositWitnessWire(payload.witness);
+    const sourceEvidence = fromSourceDepositEvidenceWire(payload.sourceEvidence);
+    try {
+        const finalizeTx = await attemptFinalizePendingDeposit(payload.pendingId, witness, sourceEvidence);
+        auditLog(undefined, "deposit_fill_finalized", {
+            taskId: task.id,
+            pendingId: payload.pendingId,
+            finalizeTx,
+            depositId: payload.depositId
+        });
+        delete relayerState.tasks[task.id];
+    }
+    catch (error) {
+        const message = error.message.toLowerCase();
+        if (message.includes("pendingalreadyfinalized") || message.includes("finalizationreplay")) {
+            delete relayerState.tasks[task.id];
+            return;
+        }
+        throw error;
+    }
+}
+async function runBorrowFillFinalizationTask(task) {
+    const payload = task.payload;
+    const witness = fromBorrowFillWitnessWire(payload.witness);
+    const sourceEvidence = fromSourceBorrowFillEvidenceWire(payload.sourceEvidence);
+    let finalizeTx;
+    try {
+        finalizeTx = await attemptFinalizeBorrowFill(witness, sourceEvidence, payload.intentId);
+    }
+    catch (error) {
+        const message = error.message.toLowerCase();
+        if (!message.includes("finalizationreplay")) {
+            throw error;
+        }
+    }
+    await updateIntentStatus(payload.intentId, "filled", {
+        spokeBorrowFillTx: payload.sourceTxHash,
+        spokeBorrowFillLogIndex: payload.sourceLogIndex,
+        spokeObservedBlock: payload.spokeObservedBlock,
+        spokeFinalizedToBlock: payload.spokeFinalizedToBlock,
+        borrowFillFinalizeTx: finalizeTx
+    });
+    await enqueueProverAction({
+        kind: payload.outboundKind,
+        intentId: payload.intentId,
+        user: payload.user,
+        hubAsset: payload.hubAsset,
+        amount: payload.hubAmount,
+        fee: payload.hubFee,
+        relayer: payload.relayer
+    });
+    await updateIntentStatus(payload.intentId, "awaiting_settlement", {
+        spokeBorrowFillTx: payload.sourceTxHash,
+        borrowFillFinalizeTx: finalizeTx
+    });
+    delete relayerState.tasks[task.id];
 }
 async function handleHubPendingDepositLog(log, finalizedToBlock) {
     const pendingId = log.args.pendingId;
@@ -830,7 +1081,17 @@ async function handleHubPendingDepositLog(log, finalizedToBlock) {
         sourceReceiptsRoot,
         sourceSpokePool
     };
-    await attemptFinalizePendingDeposit(pendingId, witness, sourceEvidence, depositId, user, intentType, hubAsset, amount);
+    enqueueDepositFinalizationTask({
+        pendingId,
+        witness,
+        sourceEvidence,
+        sourceChainId,
+        depositId,
+        intentType: intentType,
+        user,
+        hubAsset,
+        amount
+    });
 }
 async function handleHubBridgedDepositLog(log, finalizedToBlock) {
     const depositId = asBigInt(log.args.depositId);
@@ -923,6 +1184,63 @@ async function handleHubBridgedDepositLog(log, finalizedToBlock) {
         amount: amount.toString()
     });
 }
+async function handleHubPendingDepositExpiredLog(log) {
+    const pendingId = log.args.pendingId;
+    const sourceChainId = asBigInt(log.args.sourceChainId);
+    const depositId = asBigInt(log.args.depositId);
+    const finalizeDeadline = asBigInt(log.args.finalizeDeadline);
+    if (!pendingId || sourceChainId === undefined || depositId === undefined)
+        return;
+    const existing = await fetchDeposit(sourceChainId, depositId);
+    if (!existing || existing.status === "bridged" || existing.status === "settled" || existing.status === "swept") {
+        return;
+    }
+    await postInternal(indexerApi, "/internal/deposits/upsert", {
+        sourceChainId: Number(sourceChainId),
+        depositId: Number(depositId),
+        user: existing.user,
+        intentType: existing.intentType,
+        token: existing.token,
+        amount: existing.amount,
+        status: "expired",
+        metadata: {
+            pendingId,
+            expiredTx: log.transactionHash ?? "0x",
+            finalizeDeadline: finalizeDeadline?.toString()
+        }
+    });
+}
+async function handleHubPendingDepositSweptLog(log) {
+    const pendingId = log.args.pendingId;
+    const sourceChainId = asBigInt(log.args.sourceChainId);
+    const depositId = asBigInt(log.args.depositId);
+    const token = log.args.token;
+    const amount = asBigInt(log.args.amount);
+    const recoveryVault = log.args.recoveryVault;
+    if (!pendingId || sourceChainId === undefined || depositId === undefined)
+        return;
+    delete relayerState.tasks[depositFinalizationTaskId(pendingId)];
+    const existing = await fetchDeposit(sourceChainId, depositId);
+    if (!existing || existing.status === "bridged" || existing.status === "settled") {
+        return;
+    }
+    await postInternal(indexerApi, "/internal/deposits/upsert", {
+        sourceChainId: Number(sourceChainId),
+        depositId: Number(depositId),
+        user: existing.user,
+        intentType: existing.intentType,
+        token: existing.token,
+        amount: existing.amount,
+        status: "swept",
+        metadata: {
+            pendingId,
+            sweptTx: log.transactionHash ?? "0x",
+            sweptToken: token,
+            sweptAmount: amount?.toString(),
+            recoveryVault
+        }
+    });
+}
 async function fetchDeposit(sourceChainId, depositId) {
     const scoped = await fetch(`${indexerApi}/deposits/${sourceChainId.toString()}/${depositId.toString()}`).catch(() => null);
     if (scoped?.ok) {
@@ -938,6 +1256,27 @@ async function fetchIntent(intentId) {
     if (!existing || !existing.ok)
         return undefined;
     return (await existing.json());
+}
+async function upsertDepositFinalizationStatus(payload, status, metadata) {
+    const sourceChainId = BigInt(payload.sourceChainId);
+    const depositId = BigInt(payload.depositId);
+    const existing = await fetchDeposit(sourceChainId, depositId);
+    if (existing?.status === "bridged" || existing?.status === "settled" || existing?.status === "swept") {
+        return;
+    }
+    await postInternal(indexerApi, "/internal/deposits/upsert", {
+        sourceChainId: Number(sourceChainId),
+        depositId: Number(depositId),
+        user: payload.user,
+        intentType: payload.intentType,
+        token: payload.hubAsset,
+        amount: payload.amount,
+        status,
+        metadata: {
+            pendingId: payload.pendingId,
+            ...metadata
+        }
+    });
 }
 async function fetchLockAmount(intentId, blockNumber) {
     const maxAttempts = 5;
@@ -1127,40 +1466,17 @@ async function fetchBorrowFillProof(witness, sourceEvidence) {
     }
     return proof;
 }
-async function attemptFinalizePendingDeposit(pendingId, witness, sourceEvidence, depositId, user, intentType, hubAsset, amount) {
-    let proof;
-    try {
-        proof = await fetchDepositProof(witness, sourceEvidence);
-    }
-    catch (error) {
-        console.warn(`Deposit proof fetch failed for deposit ${depositId.toString()}: ${error.message}`);
-        return;
-    }
-    try {
-        const finalizeTx = await hubWallet.writeContract({
-            abi: acrossReceiverAbi,
-            address: acrossReceiverAddress,
-            functionName: "finalizePendingDeposit",
-            args: [pendingId, proof, witness],
-            account: relayerAccount
-        });
-        await hubPublic.waitForTransactionReceipt({ hash: finalizeTx });
-        await postInternal(indexerApi, "/internal/deposits/upsert", {
-            sourceChainId: Number(witness.sourceChainId),
-            depositId: Number(depositId),
-            user,
-            intentType,
-            token: hubAsset,
-            amount: amount.toString(),
-            status: "pending_fill",
-            metadata: {
-                finalizeTx
-            }
-        });
-    }
-    catch (error) {
-        console.warn(`Across pending finalization failed for deposit ${depositId.toString()}: ${error.message}`);
-    }
+async function attemptFinalizePendingDeposit(pendingId, witness, sourceEvidence) {
+    const proof = await fetchDepositProof(witness, sourceEvidence);
+    const finalizeTx = await hubWallet.writeContract({
+        abi: acrossReceiverAbi,
+        address: acrossReceiverAddress,
+        functionName: "finalizePendingDeposit",
+        args: [pendingId, proof, witness],
+        account: relayerAccount
+    });
+    await hubPublic.waitForTransactionReceipt({ hash: finalizeTx });
+    return finalizeTx;
 }
 async function attemptFinalizeBorrowFill(witness, sourceEvidence, intentId) {
     const proof = await fetchBorrowFillProof(witness, sourceEvidence);
@@ -1330,6 +1646,30 @@ function isRetryableAcrossQuoteError(error) {
         || message.includes("504")
         || message.includes("429"));
 }
+function isTerminalDepositFinalizationError(message) {
+    const normalized = message.toLowerCase();
+    return (normalized.includes("invaliddepositproof")
+        || normalized.includes("witnessmismatch")
+        || normalized.includes("pendingfillmismatch")
+        || normalized.includes("pendingnotfound")
+        || normalized.includes("pendingalreadyswept")
+        || normalized.includes("pendinginvalidstate"));
+}
+function isTerminalBorrowFinalizationError(message) {
+    const normalized = message.toLowerCase();
+    return (normalized.includes("invalidborrowfillproof")
+        || normalized.includes("fillevidencelockexpired")
+        || normalized.includes("fillevidencelocknotactive")
+        || normalized.includes("fillevidencelockmismatch")
+        || normalized.includes("lockexpired")
+        || normalized.includes("locknotactive")
+        || normalized.includes("pendingalreadyswept"));
+}
+function computeRetryDelayMs(attempts) {
+    const exp = Math.max(0, attempts - 1);
+    const delay = finalizationRetryBaseDelayMs * (2 ** Math.min(exp, 10));
+    return Math.min(finalizationRetryMaxDelayMs, delay);
+}
 function isUnknownBlockReadError(error) {
     const message = String(error?.message ?? "").toLowerCase();
     return message.includes("unknown block");
@@ -1347,24 +1687,8 @@ function defaultAcrossQuote(amount) {
         exclusiveRelayer: ZERO_ADDRESS
     };
 }
-function loadTracking(filePath) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (!fs.existsSync(filePath)) {
-        const initial = { lastSpokeBlock: 0n, lastHubBlock: 0n };
-        saveTracking(filePath, initial);
-        return initial;
-    }
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return {
-        lastSpokeBlock: BigInt(raw.lastSpokeBlock ?? "0"),
-        lastHubBlock: BigInt(raw.lastHubBlock ?? "0")
-    };
-}
-function saveTracking(filePath, state) {
-    fs.writeFileSync(filePath, JSON.stringify({
-        lastSpokeBlock: state.lastSpokeBlock.toString(),
-        lastHubBlock: state.lastHubBlock.toString()
-    }, null, 2));
+function saveRelayerRuntimeState() {
+    saveRelayerState(statePath, relayerState);
 }
 async function postInternal(baseUrl, routePath, body) {
     const rawBody = JSON.stringify(body);
@@ -1527,6 +1851,100 @@ function toOutboundIntentKind(intentType) {
         return "withdraw";
     return undefined;
 }
+function toDepositWitnessWire(witness) {
+    return {
+        sourceChainId: witness.sourceChainId.toString(),
+        depositId: witness.depositId.toString(),
+        intentType: witness.intentType,
+        user: witness.user,
+        spokeToken: witness.spokeToken,
+        hubAsset: witness.hubAsset,
+        amount: witness.amount.toString(),
+        sourceTxHash: witness.sourceTxHash,
+        sourceLogIndex: witness.sourceLogIndex.toString(),
+        messageHash: witness.messageHash
+    };
+}
+function fromDepositWitnessWire(witness) {
+    return {
+        sourceChainId: BigInt(witness.sourceChainId),
+        depositId: BigInt(witness.depositId),
+        intentType: witness.intentType,
+        user: witness.user,
+        spokeToken: witness.spokeToken,
+        hubAsset: witness.hubAsset,
+        amount: BigInt(witness.amount),
+        sourceTxHash: witness.sourceTxHash,
+        sourceLogIndex: BigInt(witness.sourceLogIndex),
+        messageHash: witness.messageHash
+    };
+}
+function toSourceDepositEvidenceWire(sourceEvidence) {
+    return {
+        sourceBlockNumber: sourceEvidence.sourceBlockNumber.toString(),
+        sourceBlockHash: sourceEvidence.sourceBlockHash,
+        sourceReceiptsRoot: sourceEvidence.sourceReceiptsRoot,
+        sourceSpokePool: sourceEvidence.sourceSpokePool
+    };
+}
+function fromSourceDepositEvidenceWire(sourceEvidence) {
+    return {
+        sourceBlockNumber: BigInt(sourceEvidence.sourceBlockNumber),
+        sourceBlockHash: sourceEvidence.sourceBlockHash,
+        sourceReceiptsRoot: sourceEvidence.sourceReceiptsRoot,
+        sourceSpokePool: sourceEvidence.sourceSpokePool
+    };
+}
+function toBorrowFillWitnessWire(witness) {
+    return {
+        sourceChainId: witness.sourceChainId.toString(),
+        intentId: witness.intentId,
+        intentType: witness.intentType,
+        user: witness.user,
+        recipient: witness.recipient,
+        spokeToken: witness.spokeToken,
+        hubAsset: witness.hubAsset,
+        amount: witness.amount.toString(),
+        fee: witness.fee.toString(),
+        relayer: witness.relayer,
+        sourceTxHash: witness.sourceTxHash,
+        sourceLogIndex: witness.sourceLogIndex.toString(),
+        messageHash: witness.messageHash
+    };
+}
+function fromBorrowFillWitnessWire(witness) {
+    return {
+        sourceChainId: BigInt(witness.sourceChainId),
+        intentId: witness.intentId,
+        intentType: witness.intentType,
+        user: witness.user,
+        recipient: witness.recipient,
+        spokeToken: witness.spokeToken,
+        hubAsset: witness.hubAsset,
+        amount: BigInt(witness.amount),
+        fee: BigInt(witness.fee),
+        relayer: witness.relayer,
+        sourceTxHash: witness.sourceTxHash,
+        sourceLogIndex: BigInt(witness.sourceLogIndex),
+        messageHash: witness.messageHash
+    };
+}
+function toSourceBorrowFillEvidenceWire(sourceEvidence) {
+    return {
+        sourceBlockNumber: sourceEvidence.sourceBlockNumber.toString(),
+        sourceBlockHash: sourceEvidence.sourceBlockHash,
+        sourceReceiptsRoot: sourceEvidence.sourceReceiptsRoot,
+        sourceReceiver: sourceEvidence.sourceReceiver
+    };
+}
+function fromSourceBorrowFillEvidenceWire(sourceEvidence) {
+    return {
+        sourceBlockNumber: BigInt(sourceEvidence.sourceBlockNumber),
+        sourceBlockHash: sourceEvidence.sourceBlockHash,
+        sourceReceiptsRoot: sourceEvidence.sourceReceiptsRoot,
+        sourceReceiver: sourceEvidence.sourceReceiver
+    };
+}
 function decodeAcrossDepositMessage(message) {
     try {
         const decoded = decodeAbiParameters([
@@ -1612,6 +2030,18 @@ function validateStartupConfig() {
     }
     if (!Number.isInteger(acrossQuoteMaxAttempts) || acrossQuoteMaxAttempts <= 0) {
         throw new Error("ACROSS_QUOTE_MAX_ATTEMPTS must be a positive integer");
+    }
+    if (!Number.isInteger(finalizationWorkerIntervalMs) || finalizationWorkerIntervalMs <= 0) {
+        throw new Error("RELAYER_FINALIZATION_WORKER_INTERVAL_MS must be a positive integer");
+    }
+    if (!Number.isFinite(finalizationRetryBaseDelayMs) || finalizationRetryBaseDelayMs <= 0) {
+        throw new Error("RELAYER_FINALIZATION_RETRY_BASE_MS must be a positive integer");
+    }
+    if (!Number.isFinite(finalizationRetryMaxDelayMs) || finalizationRetryMaxDelayMs <= 0) {
+        throw new Error("RELAYER_FINALIZATION_RETRY_MAX_MS must be a positive integer");
+    }
+    if (!Number.isInteger(finalizationMaxAttempts) || finalizationMaxAttempts <= 0) {
+        throw new Error("RELAYER_FINALIZATION_MAX_ATTEMPTS must be a positive integer");
     }
     if (!acrossReceiverAddress) {
         throw new Error("Missing HUB_ACROSS_RECEIVER_ADDRESS");

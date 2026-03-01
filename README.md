@@ -75,7 +75,7 @@ pnpm dev
 - `DepositProofVerifier`: witness->public-input adapter for deposit proof verification.
 - `BorrowFillProofVerifier`: witness->public-input adapter for borrow fill proof verification.
 - `HubCustody`: bridged funds intake + controlled release to market.
-- `HubAcrossReceiver`: Across callback receiver that records pending fills and finalizes deposits only after proof verification.
+- `HubAcrossReceiver`: Across callback receiver that records pending fills, supports timeout expiry + recovery sweep, and finalizes deposits only after proof verification.
 - `HubAcrossBorrowDispatcher`: hub-side Across dispatcher for borrow fulfillment transport.
 - `HubAcrossBorrowFinalizer`: hub-side proof-gated recorder for borrow fill evidence.
 - `TokenRegistry`: token mappings (hub/spoke), decimals, risk, bridge adapter id.
@@ -92,11 +92,12 @@ pnpm dev
 ### Supply / Repay
 1. User calls `SpokePortal.initiateSupply` or `initiateRepay`.
 2. Across transport emits source deposit event on spoke.
-3. Across destination fill triggers hub callback; `HubAcrossReceiver` records `pending_fill` (untrusted message, no custody credit yet).
-4. Anyone can call `HubAcrossReceiver.finalizePendingDeposit` with a valid deposit proof.
+3. Across destination fill triggers hub callback; `HubAcrossReceiver` records `pending_fill` (untrusted message, no custody credit yet) with finalize/sweep deadlines.
+4. Anyone can call `HubAcrossReceiver.finalizePendingDeposit` with a valid deposit proof while pending is `ACTIVE`/`EXPIRED` and not swept.
 5. On proof success, receiver moves bridged funds into `HubCustody` and registers the bridged deposit exactly once.
-6. Prover batches deposit actions and submits settlement proof.
-7. Hub settlement credits supply or repays debt.
+6. If proof finalization is delayed/fails, pending deposits can be marked expired and later swept to the recovery vault (`PendingDepositExpired` / `PendingDepositSwept`).
+7. Prover batches deposit actions and submits settlement proof.
+8. Hub settlement credits supply or repays debt.
 
 ### Borrow
 1. User signs EIP-712 intent in UI.
@@ -174,7 +175,10 @@ If you run a hub fork on `:8545` and spoke fork on `:8546`, execute:
 
 ```bash
 HUB_NETWORK=base \
+HUB_CHAIN_ID=8453 \
 SPOKE_NETWORKS=worldchain \
+HUB_RPC_URL=http://127.0.0.1:8545 \
+SPOKE_RPC_URL=http://127.0.0.1:8546 \
 BASE_TENDERLY_RPC_URL=http://127.0.0.1:8545 \
 WORLDCHAIN_TENDERLY_RPC_URL=http://127.0.0.1:8546 \
 pnpm test:e2e:fork
@@ -206,7 +210,10 @@ To run only the inbound supply path for Base-hub semantics (default spoke: World
 
 ```bash
 HUB_NETWORK=base \
+HUB_CHAIN_ID=8453 \
 SPOKE_NETWORKS=worldchain \
+HUB_RPC_URL=http://127.0.0.1:8545 \
+SPOKE_RPC_URL=http://127.0.0.1:8546 \
 BASE_TENDERLY_RPC_URL=http://127.0.0.1:8545 \
 WORLDCHAIN_TENDERLY_RPC_URL=http://127.0.0.1:8546 \
 pnpm test:e2e:base-hub-supply
@@ -220,6 +227,7 @@ This wrapper runs `scripts/e2e-fork.mjs` with `E2E_SUPPLY_ONLY=1` and asserts:
 Legacy alias: `pnpm test:e2e:base-mainnet-supply` still forwards to the Base-hub supply wrapper.
 
 For local/fork tests only, the script simulates the destination relay callback with `MockAcrossSpokePool.relayV3Deposit`; production relayer runtime no longer performs this relay simulation.
+The relayer now persists a durable finalization queue (`RELAYER_TRACKING_PATH`) so finalization failures are retried instead of dropped when cursors advance.
 
 ### Live E2E (Base hub + Worldchain/BSC spokes, real RPCs)
 
@@ -309,8 +317,9 @@ After local deploy:
   - `setRoute(localToken, acrossSpokePool, hubToken, exclusiveRelayer, fillDeadlineBuffer, true)` per token
   - `SpokePortal.setBridgeAdapter(<AcrossBridgeAdapter>)`
 - Configure hub-side Across receiver:
-  - deploy `HubAcrossReceiver(admin, custody, depositProofVerifier, hubSpokePool)`
+  - deploy `HubAcrossReceiver(admin, custody, depositProofVerifier, hubSpokePool, recoveryVault, pendingFinalizeTtl, recoverySweepDelay)`
   - grant `CANONICAL_BRIDGE_RECEIVER_ROLE` on `HubCustody` to `HubAcrossReceiver`
+  - set recovery config as needed (`setRecoveryConfig(recoveryVault, pendingFinalizeTtl, recoverySweepDelay)`)
   - do not grant attester/operator EOAs any custody bridge registration role
 - Configure Across borrow fulfillment path:
   - deploy `HubAcrossBorrowDispatcher(admin, hubAcrossBorrowFinalizer)`

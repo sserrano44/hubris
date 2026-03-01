@@ -90,7 +90,7 @@ function runSharedStoreContract(name: string, createStore: () => IndexerStore) {
     assert.equal(filtered[0]?.intentId, baseIntent.intentId);
   });
 
-  test(`${name}: deposit upsert merges metadata`, () => {
+  test(`${name}: deposit upsert merges metadata across lifecycle states`, () => {
     const store = createStore();
 
     const inserted = store.upsertDeposit(makeDeposit({ metadata: { step: "initiated" } }));
@@ -122,6 +122,32 @@ function runSharedStoreContract(name: string, createStore: () => IndexerStore) {
     const fromGet = store.getDeposit(8453, 42);
     assert.ok(fromGet);
     assert.equal(fromGet.status, "bridged");
+
+    const retried = store.upsertDeposit(
+      makeDeposit({
+        status: "finalization_retry",
+        metadata: { retryCount: 1, lastError: "rpc timeout" }
+      })
+    );
+    assert.equal(retried.status, "finalization_retry");
+    assert.equal(retried.metadata?.retryCount, 1);
+
+    const expired = store.upsertDeposit(
+      makeDeposit({
+        status: "expired",
+        metadata: { expiredTx: "0x9999" }
+      })
+    );
+    assert.equal(expired.status, "expired");
+
+    const swept = store.upsertDeposit(
+      makeDeposit({
+        status: "swept",
+        metadata: { sweptTx: "0xaaaa" }
+      })
+    );
+    assert.equal(swept.status, "swept");
+    assert.equal(swept.metadata?.sweptTx, "0xaaaa");
   });
 }
 

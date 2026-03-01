@@ -6,10 +6,11 @@ export type DepositState = {
     intentType: number;
     token: `0x${string}`;
     amount: string;
-    status: "initiated" | "pending_fill" | "bridged" | "settled";
+    status: DepositStatus;
     metadata?: Record<string, unknown>;
     updatedAt: string;
 };
+export type DepositStatus = "initiated" | "pending_fill" | "finalization_retry" | "finalization_failed" | "expired" | "swept" | "bridged" | "settled";
 export type DepositInput = Omit<DepositState, "updatedAt"> & {
     updatedAt?: string;
 };

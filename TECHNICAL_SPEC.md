@@ -1,7 +1,7 @@
 # elhub Technical Specification
 
 Version: `0.1.0`  
-Last updated: `2026-02-21`
+Last updated: `2026-02-28`
 
 ## 1. Purpose and Scope
 
@@ -180,9 +180,13 @@ Responsibilities:
 1. Accept Across callback only from configured hub `SpokePool`.
 2. Treat callback message as untrusted and store a `pending` fill only.
 3. Track actual `tokenSent` and `amountReceived` from callback params.
-4. Finalize pending fill permissionlessly via `verifyDepositProof`.
-5. Move funds into `HubCustody` and call `registerBridgedDeposit` only after valid proof.
-6. Enforce replay protection via finalization key:
+4. Stamp each pending deposit with `finalizeDeadline` and `sweepEligibleAt`.
+5. Finalize pending fill permissionlessly via `verifyDepositProof` while pending is not swept.
+6. Support timeout recovery:
+   1. permissionless `expirePendingDeposit`
+   2. admin `sweepExpiredPending` to `recoveryVault` after sweep delay
+7. Move funds into `HubCustody` and call `registerBridgedDeposit` only after valid proof.
+8. Enforce replay protection via finalization key:
    1. `sourceChainId + sourceTxHash + sourceLogIndex + depositId + messageHash`.
 
 ### 5.7 HubSettlement
@@ -277,8 +281,11 @@ Responsibilities:
    1. receiver transfers bridged token to `HubCustody`.
    2. receiver calls `HubCustody.registerBridgedDeposit`.
    3. indexer status updates to `bridged`.
-7. Prover enqueues action.
-8. Settlement batch verifies and applies supply/repay accounting.
+7. If proof does not finalize in time:
+   1. pending may move to `expired` (`PendingDepositExpired`)
+   2. then `swept` (`PendingDepositSwept`) to recovery vault after sweep delay
+8. Prover enqueues action for bridged deposits.
+9. Settlement batch verifies and applies supply/repay accounting.
 
 ### 6.2 Borrow (Base accounting -> Worldchain payout via Across)
 1. User signs EIP-712 intent.
@@ -315,8 +322,12 @@ Responsibilities:
 ### 6.5 Indexer deposit statuses
 1. `initiated`
 2. `pending_fill`
-3. `bridged`
-4. `settled`
+3. `finalization_retry`
+4. `finalization_failed`
+5. `expired`
+6. `swept`
+7. `bridged`
+8. `settled`
 
 ## 7. Proof System Specification
 
@@ -381,14 +392,16 @@ Behavior:
    1. canonical live event `FundsDeposited`
    2. local/fork mock event `V3FundsDeposited`
 2. Updates indexer via signed internal calls.
-3. Waits for hub-side Across callback (`PendingDepositRecorded`), then runs permissionless proof finalization for inbound deposits.
-4. For borrow submit:
+3. Persists poll cursors and finalization tasks in a durable tracking file (`RELAYER_TRACKING_PATH`) and retries failed finalizations asynchronously.
+4. Waits for hub-side Across callback (`PendingDepositRecorded`), then enqueues permissionless proof finalization for inbound deposits.
+5. Watches hub receiver recovery events (`PendingDepositExpired`, `PendingDepositSwept`) to mark terminal deposit states and clear pending tasks.
+6. For borrow submit:
    1. lock on hub
    2. dispatch Across fill from hub via `HubAcrossBorrowDispatcher`
    3. observe spoke `BorrowFillRecorded` with expected `hubDispatcher` and `hubFinalizer`
    4. finalize proof on hub via `HubAcrossBorrowFinalizer`
    5. enqueue prover action
-5. For withdraw submit:
+7. For withdraw submit:
    1. lock on hub
    2. dispatch Across fill from hub via `HubAcrossBorrowDispatcher` (`intentType=WITHDRAW`)
    3. observe spoke `BorrowFillRecorded` with expected `hubDispatcher` and `hubFinalizer`
@@ -403,6 +416,7 @@ Public endpoints:
 2. `GET /activity?user=<address?>`
 3. `GET /intents/:intentId`
 4. `GET /deposits/:depositId`
+5. `GET /deposits/:sourceChainId/:depositId`
 
 Internal endpoints (`/internal/*`, HMAC-authenticated):
 1. `POST /internal/intents/upsert`
@@ -548,6 +562,8 @@ Enforced in current implementation:
 6. Settlement applies only after verifier success.
 7. Reentrancy guards on critical state transition functions.
 8. Pause controls on lock manager, settlement, market, and spoke portal.
+9. Hub pending deposits have explicit expiry/sweep recovery paths to avoid indefinite stuck states.
+10. Relayer finalization attempts are persisted and retried durably instead of dropped on cursor advancement.
 
 Known security gaps (tracked by readiness plan):
 1. Deposit proof backend trust/quality (production must use real light-client/ZK verification constraints for source event validity).

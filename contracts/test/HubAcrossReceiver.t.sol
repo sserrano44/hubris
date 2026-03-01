@@ -43,7 +43,7 @@ contract HubAcrossReceiverTest is TestBase {
         spokePool = new MockAcrossSpokePool();
         proofBackend.setSourceSpokePool(SOURCE_CHAIN_ID, address(spokePool));
         verifier = new DepositProofVerifier(proofBackend);
-        receiver = new HubAcrossReceiver(address(this), custody, verifier, address(spokePool));
+        receiver = new HubAcrossReceiver(address(this), custody, verifier, address(spokePool), address(this), 1 days, 1 days);
 
         custody.grantRole(custody.CANONICAL_BRIDGE_RECEIVER_ROLE(), address(receiver));
         hubUsdc.mint(address(spokePool), 10_000_000e6);
@@ -67,9 +67,8 @@ contract HubAcrossReceiverTest is TestBase {
         assertEq(hubAsset, address(0), "callback alone must not register custody deposit");
         assertEq(hubUsdc.balanceOf(address(custody)), 0, "callback alone must not move funds into custody");
 
-        (bool exists, bool finalized,,,,,,,,,,,) = receiver.pendingDeposits(pendingId);
-        assertTrue(exists, "pending deposit should exist after callback");
-        assertTrue(!finalized, "pending deposit should not be finalized yet");
+        (HubAcrossReceiver.PendingState state,,,,,,,,,,,,,,) = receiver.pendingDeposits(pendingId);
+        assertEq(uint8(state), uint8(HubAcrossReceiver.PendingState.ACTIVE), "pending deposit should be active");
     }
 
     function test_invalidProofRejected() external {
@@ -151,6 +150,52 @@ contract HubAcrossReceiverTest is TestBase {
 
         (, , address hubAsset,,) = custody.deposits(SOURCE_CHAIN_ID, 6);
         assertEq(hubAsset, address(0), "forged attempts must not register custody deposit");
+    }
+
+    function test_expirePendingDepositTransitionsState() external {
+        (bytes32 pendingId,,,,,) = _relayPendingDeposit(7, Constants.INTENT_SUPPLY, attacker, 33e6);
+
+        vm.expectRevert(abi.encodeWithSelector(HubAcrossReceiver.PendingNotExpired.selector, pendingId, block.timestamp + 1 days));
+        receiver.expirePendingDeposit(pendingId);
+
+        vm.warp(block.timestamp + 1 days);
+        receiver.expirePendingDeposit(pendingId);
+
+        (HubAcrossReceiver.PendingState state,,,,,,,,,,,,,,) = receiver.pendingDeposits(pendingId);
+        assertEq(uint8(state), uint8(HubAcrossReceiver.PendingState.EXPIRED), "pending deposit should be expired");
+    }
+
+    function test_finalizeAllowedAfterExpiryBeforeSweep() external {
+        (bytes32 pendingId, IDepositProofVerifier.DepositWitness memory witness, bytes32 sourceBlockHash, bytes32 receiptsRoot,,) =
+            _relayPendingDeposit(8, Constants.INTENT_SUPPLY, attacker, 90e6);
+        bytes memory proof = _buildCanonicalProof(witness, sourceBlockHash, receiptsRoot);
+
+        vm.warp(block.timestamp + 1 days + 1);
+        receiver.finalizePendingDeposit(pendingId, proof, witness);
+
+        (HubAcrossReceiver.PendingState state,,,,,,,,,,,,,,) = receiver.pendingDeposits(pendingId);
+        assertEq(uint8(state), uint8(HubAcrossReceiver.PendingState.FINALIZED), "pending deposit should be finalized");
+        assertEq(hubUsdc.balanceOf(address(custody)), 90e6, "finalization after expiry should still credit custody");
+    }
+
+    function test_sweepExpiredPendingTransfersToRecoveryVaultAndBlocksFinalize() external {
+        (bytes32 pendingId, IDepositProofVerifier.DepositWitness memory witness, bytes32 sourceBlockHash, bytes32 receiptsRoot,,) =
+            _relayPendingDeposit(9, Constants.INTENT_SUPPLY, attacker, 110e6);
+        bytes memory proof = _buildCanonicalProof(witness, sourceBlockHash, receiptsRoot);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(abi.encodeWithSelector(HubAcrossReceiver.PendingNotSweepable.selector, pendingId, block.timestamp + 1 days));
+        receiver.sweepExpiredPending(pendingId);
+
+        vm.warp(block.timestamp + 1 days);
+        receiver.sweepExpiredPending(pendingId);
+
+        (HubAcrossReceiver.PendingState state,,,,,,,,,,,,,,) = receiver.pendingDeposits(pendingId);
+        assertEq(uint8(state), uint8(HubAcrossReceiver.PendingState.SWEPT), "pending deposit should be swept");
+        assertEq(hubUsdc.balanceOf(address(this)), 110e6, "sweep should send funds to recovery vault");
+
+        vm.expectRevert(abi.encodeWithSelector(HubAcrossReceiver.PendingAlreadySwept.selector, pendingId));
+        receiver.finalizePendingDeposit(pendingId, proof, witness);
     }
 
     function _relayPendingDeposit(uint256 depositId, uint8 intentType, address user, uint256 amount)

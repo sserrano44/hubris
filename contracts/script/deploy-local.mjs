@@ -85,6 +85,9 @@ const deployer = privateKeyToAccount(DEPLOYER_PRIVATE_KEY);
 const relayer = privateKeyToAccount(RELAYER_PRIVATE_KEY);
 const bridge = privateKeyToAccount(BRIDGE_PRIVATE_KEY);
 const prover = privateKeyToAccount(PROVER_PRIVATE_KEY);
+const HUB_RECOVERY_VAULT = process.env.HUB_RECOVERY_VAULT ?? deployer.address;
+const HUB_PENDING_FINALIZE_TTL = BigInt(process.env.HUB_PENDING_FINALIZE_TTL ?? "86400");
+const HUB_RECOVERY_SWEEP_DELAY = BigInt(process.env.HUB_RECOVERY_SWEEP_DELAY ?? "86400");
 
 const hubChain = defineChain({
   id: HUB_CHAIN_ID,
@@ -385,8 +388,18 @@ async function main() {
     deployer.address,
     custody,
     depositProofVerifier,
-    hubAcrossSpokePool
-  ], [deployer.address, depositProofVerifier, hubAcrossSpokePool]);
+    hubAcrossSpokePool,
+    HUB_RECOVERY_VAULT,
+    HUB_PENDING_FINALIZE_TTL,
+    HUB_RECOVERY_SWEEP_DELAY
+  ], [
+    deployer.address,
+    depositProofVerifier,
+    hubAcrossSpokePool,
+    HUB_RECOVERY_VAULT,
+    HUB_PENDING_FINALIZE_TTL,
+    HUB_RECOVERY_SWEEP_DELAY
+  ]);
   const hubAcrossReceiver = hubAcrossReceiverDeployment.proxy;
 
   console.log("Deploying spoke protocol (UUPS proxies)...");

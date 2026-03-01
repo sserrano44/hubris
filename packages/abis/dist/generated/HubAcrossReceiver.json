@@ -21,6 +21,21 @@
                 "name": "spokePool_",
                 "type": "address",
                 "internalType": "address"
+            },
+            {
+                "name": "recoveryVault_",
+                "type": "address",
+                "internalType": "address"
+            },
+            {
+                "name": "pendingFinalizeTtl_",
+                "type": "uint256",
+                "internalType": "uint256"
+            },
+            {
+                "name": "recoverySweepDelay_",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ],
         "stateMutability": "nonpayable"
@@ -34,6 +49,32 @@
                 "name": "",
                 "type": "bytes32",
                 "internalType": "bytes32"
+            }
+        ],
+        "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "DEFAULT_PENDING_FINALIZE_TTL",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "DEFAULT_RECOVERY_SWEEP_DELAY",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ],
         "stateMutability": "view"
@@ -76,6 +117,19 @@
             }
         ],
         "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "expirePendingDeposit",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
     },
     {
         "type": "function",
@@ -298,6 +352,21 @@
                 "name": "spokePool_",
                 "type": "address",
                 "internalType": "address"
+            },
+            {
+                "name": "recoveryVault_",
+                "type": "address",
+                "internalType": "address"
+            },
+            {
+                "name": "pendingFinalizeTtl_",
+                "type": "uint256",
+                "internalType": "uint256"
+            },
+            {
+                "name": "recoverySweepDelay_",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ],
         "outputs": [],
@@ -315,14 +384,24 @@
         ],
         "outputs": [
             {
-                "name": "exists",
-                "type": "bool",
-                "internalType": "bool"
+                "name": "state",
+                "type": "uint8",
+                "internalType": "enum HubAcrossReceiver.PendingState"
             },
             {
-                "name": "finalized",
-                "type": "bool",
-                "internalType": "bool"
+                "name": "createdAt",
+                "type": "uint256",
+                "internalType": "uint256"
+            },
+            {
+                "name": "finalizeDeadline",
+                "type": "uint256",
+                "internalType": "uint256"
+            },
+            {
+                "name": "sweepEligibleAt",
+                "type": "uint256",
+                "internalType": "uint256"
             },
             {
                 "name": "sourceChainId",
@@ -378,6 +457,19 @@
                 "name": "messageHash",
                 "type": "bytes32",
                 "internalType": "bytes32"
+            }
+        ],
+        "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "pendingFinalizeTtl",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ],
         "stateMutability": "view"
@@ -446,6 +538,32 @@
     },
     {
         "type": "function",
+        "name": "recoverySweepDelay",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ],
+        "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "recoveryVault",
+        "inputs": [],
+        "outputs": [
+            {
+                "name": "",
+                "type": "address",
+                "internalType": "address"
+            }
+        ],
+        "stateMutability": "view"
+    },
+    {
+        "type": "function",
         "name": "renounceRole",
         "inputs": [
             {
@@ -475,6 +593,29 @@
                 "name": "account",
                 "type": "address",
                 "internalType": "address"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+    },
+    {
+        "type": "function",
+        "name": "setRecoveryConfig",
+        "inputs": [
+            {
+                "name": "recoveryVault_",
+                "type": "address",
+                "internalType": "address"
+            },
+            {
+                "name": "pendingFinalizeTtl_",
+                "type": "uint256",
+                "internalType": "uint256"
+            },
+            {
+                "name": "recoverySweepDelay_",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ],
         "outputs": [],
@@ -518,6 +659,19 @@
             }
         ],
         "stateMutability": "view"
+    },
+    {
+        "type": "function",
+        "name": "sweepExpiredPending",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
     },
     {
         "type": "function",
@@ -578,6 +732,43 @@
                 "type": "uint64",
                 "indexed": false,
                 "internalType": "uint64"
+            }
+        ],
+        "anonymous": false
+    },
+    {
+        "type": "event",
+        "name": "PendingDepositExpired",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "indexed": true,
+                "internalType": "bytes32"
+            },
+            {
+                "name": "sourceChainId",
+                "type": "uint256",
+                "indexed": true,
+                "internalType": "uint256"
+            },
+            {
+                "name": "depositId",
+                "type": "uint256",
+                "indexed": true,
+                "internalType": "uint256"
+            },
+            {
+                "name": "finalizeDeadline",
+                "type": "uint256",
+                "indexed": false,
+                "internalType": "uint256"
+            },
+            {
+                "name": "caller",
+                "type": "address",
+                "indexed": false,
+                "internalType": "address"
             }
         ],
         "anonymous": false
@@ -742,6 +933,80 @@
                 "type": "bytes32",
                 "indexed": false,
                 "internalType": "bytes32"
+            }
+        ],
+        "anonymous": false
+    },
+    {
+        "type": "event",
+        "name": "PendingDepositSwept",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "indexed": true,
+                "internalType": "bytes32"
+            },
+            {
+                "name": "sourceChainId",
+                "type": "uint256",
+                "indexed": true,
+                "internalType": "uint256"
+            },
+            {
+                "name": "depositId",
+                "type": "uint256",
+                "indexed": true,
+                "internalType": "uint256"
+            },
+            {
+                "name": "token",
+                "type": "address",
+                "indexed": false,
+                "internalType": "address"
+            },
+            {
+                "name": "amount",
+                "type": "uint256",
+                "indexed": false,
+                "internalType": "uint256"
+            },
+            {
+                "name": "recoveryVault",
+                "type": "address",
+                "indexed": false,
+                "internalType": "address"
+            },
+            {
+                "name": "caller",
+                "type": "address",
+                "indexed": false,
+                "internalType": "address"
+            }
+        ],
+        "anonymous": false
+    },
+    {
+        "type": "event",
+        "name": "RecoveryConfigSet",
+        "inputs": [
+            {
+                "name": "recoveryVault",
+                "type": "address",
+                "indexed": true,
+                "internalType": "address"
+            },
+            {
+                "name": "pendingFinalizeTtl",
+                "type": "uint256",
+                "indexed": false,
+                "internalType": "uint256"
+            },
+            {
+                "name": "recoverySweepDelay",
+                "type": "uint256",
+                "indexed": false,
+                "internalType": "uint256"
             }
         ],
         "anonymous": false
@@ -983,6 +1248,39 @@
     },
     {
         "type": "error",
+        "name": "InvalidPendingFinalizeTtl",
+        "inputs": [
+            {
+                "name": "pendingFinalizeTtl",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ]
+    },
+    {
+        "type": "error",
+        "name": "InvalidRecoverySweepDelay",
+        "inputs": [
+            {
+                "name": "recoverySweepDelay",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ]
+    },
+    {
+        "type": "error",
+        "name": "InvalidRecoveryVault",
+        "inputs": [
+            {
+                "name": "recoveryVault",
+                "type": "address",
+                "internalType": "address"
+            }
+        ]
+    },
+    {
+        "type": "error",
         "name": "InvalidSpokePool",
         "inputs": [
             {
@@ -1032,6 +1330,17 @@
     },
     {
         "type": "error",
+        "name": "PendingAlreadySwept",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            }
+        ]
+    },
+    {
+        "type": "error",
         "name": "PendingFillMismatch",
         "inputs": [
             {
@@ -1053,12 +1362,60 @@
     },
     {
         "type": "error",
+        "name": "PendingInvalidState",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            },
+            {
+                "name": "state",
+                "type": "uint8",
+                "internalType": "uint8"
+            }
+        ]
+    },
+    {
+        "type": "error",
+        "name": "PendingNotExpired",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            },
+            {
+                "name": "finalizeDeadline",
+                "type": "uint256",
+                "internalType": "uint256"
+            }
+        ]
+    },
+    {
+        "type": "error",
         "name": "PendingNotFound",
         "inputs": [
             {
                 "name": "pendingId",
                 "type": "bytes32",
                 "internalType": "bytes32"
+            }
+        ]
+    },
+    {
+        "type": "error",
+        "name": "PendingNotSweepable",
+        "inputs": [
+            {
+                "name": "pendingId",
+                "type": "bytes32",
+                "internalType": "bytes32"
+            },
+            {
+                "name": "sweepEligibleAt",
+                "type": "uint256",
+                "internalType": "uint256"
             }
         ]
     },

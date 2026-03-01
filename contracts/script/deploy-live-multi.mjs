@@ -93,6 +93,9 @@ const bridge = privateKeyToAccount(BRIDGE_PRIVATE_KEY);
 const prover = privateKeyToAccount(PROVER_PRIVATE_KEY);
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const HUB_RECOVERY_VAULT = process.env.HUB_RECOVERY_VAULT ?? deployer.address;
+const HUB_PENDING_FINALIZE_TTL = BigInt(process.env.HUB_PENDING_FINALIZE_TTL ?? "86400");
+const HUB_RECOVERY_SWEEP_DELAY = BigInt(process.env.HUB_RECOVERY_SWEEP_DELAY ?? "86400");
 const UUPS_UPGRADE_ABI = parseAbi(["function upgradeToAndCall(address newImplementation, bytes data)"]);
 
 const TOKEN_DEFS = [
@@ -1212,8 +1215,23 @@ async function main() {
     network: HUB_NETWORK,
     chainId: HUB_CHAIN_ID,
     contractName: "HubAcrossReceiver",
-    constructorArgs: [deployer.address, custody, depositProofVerifier, hubAcrossSpokePool],
-    initArgs: [deployer.address, depositProofVerifier, hubAcrossSpokePool],
+    constructorArgs: [
+      deployer.address,
+      custody,
+      depositProofVerifier,
+      hubAcrossSpokePool,
+      HUB_RECOVERY_VAULT,
+      HUB_PENDING_FINALIZE_TTL,
+      HUB_RECOVERY_SWEEP_DELAY
+    ],
+    initArgs: [
+      deployer.address,
+      depositProofVerifier,
+      hubAcrossSpokePool,
+      HUB_RECOVERY_VAULT,
+      HUB_PENDING_FINALIZE_TTL,
+      HUB_RECOVERY_SWEEP_DELAY
+    ],
     client: hubWallet,
     publicClient: hubPublic,
     manifest,
